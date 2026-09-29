@@ -71,6 +71,8 @@ export class Arena {
   readonly walkways: Platform[] = [];
   readonly obstacles: Obstacle[] = [];
   readonly staticMeshes: Mesh[] = [];
+  /** Extra resources built on top of the arena (textures, trim), disposed with it. */
+  readonly disposables: { dispose(): void }[] = [];
   private readonly nodes: Platform[] = [];
   private readonly aggregates: PhysicsAggregate[] = [];
   private readonly materials = new Map<string, StandardMaterial>();
@@ -480,6 +482,7 @@ export class Arena {
   }
 
   dispose(): void {
+    for (const d of this.disposables) d.dispose();
     for (const a of this.aggregates) a.dispose();
     for (const m of this.staticMeshes) m.dispose();
     for (const mat of this.materials.values()) mat.dispose();

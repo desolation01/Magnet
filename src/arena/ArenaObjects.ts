@@ -13,6 +13,7 @@ import { CreateSphere } from "@babylonjs/core/Meshes/Builders/sphereBuilder";
 import { DynamicTexture } from "@babylonjs/core/Materials/Textures/dynamicTexture";
 import { ARENA, COLORS, OBJECTS, WORLD } from "../config";
 import { clampHorizontal } from "../util/math";
+import { createMetalPlateTexture } from "./ArenaTexturePaint";
 import type { Character } from "../character/Character";
 
 export type MagneticKind = "crate" | "barrel" | "ball" | "block" | "anvil" | "springBall";
@@ -131,6 +132,7 @@ export class ArenaObjects {
   private readonly anvilMat: StandardMaterial;
   private readonly springMat: StandardMaterial;
   private readonly springTex: DynamicTexture;
+  private readonly metalTex: DynamicTexture;
   /** Metal collision sound hook: (position, approximate impact speed). */
   onImpact: ((position: Vector3, speed: number) => void) | null = null;
 
@@ -153,6 +155,9 @@ export class ArenaObjects {
     this.springMat.emissiveColor = Color3.FromHexString(SPRING.emissive);
     this.springTex = createStripeTexture(scene);
     this.springMat.diffuseTexture = this.springTex;
+    // Riveted plates on every metal prop (set after cloning so the clones share one texture).
+    this.metalTex = createMetalPlateTexture(scene);
+    for (const m of [this.metal, this.metalDark, this.anvilMat]) m.diffuseTexture = this.metalTex;
 
     this.templates = {
       crate: CreateBox("tpl-crate", { size: 1 }, scene),
