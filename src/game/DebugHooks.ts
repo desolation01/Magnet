@@ -1,5 +1,6 @@
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import type { Scene } from "@babylonjs/core/scene";
+import type { Arena } from "../arena/Arena";
 import type { ArenaObjects } from "../arena/ArenaObjects";
 import type { Character, CharacterInput } from "../character/Character";
 import type { Difficulty } from "../config";
@@ -108,6 +109,7 @@ declare global {
 
 export interface DebugContext {
   scene: Scene;
+  arena: Arena;
   match: MatchManager;
   objects: ArenaObjects;
   controller: PlayerController;

@@ -25,7 +25,7 @@ export function edgeZone(arena: Arena, x: number, z: number, diff: DifficultySet
   const p = info.platform;
   if (!p || d < 0) return { zone: EdgeZone.DANGER, distance: d };
   if (p.kind === "bridge") return { zone: EdgeZone.WARNING, distance: d };
-  const outer = p.kind === "outer";
+  const outer = p.kind !== "hub"; // cardinal platforms and islands use the smaller thresholds
   const danger = (outer ? AI.outerDangerEdge : AI.dangerEdge) * diff.edgeMultiplier;
   const safe = (outer ? AI.outerSafeEdge : AI.safeEdge) * diff.edgeMultiplier;
   if (d <= danger) return { zone: EdgeZone.DANGER, distance: d };

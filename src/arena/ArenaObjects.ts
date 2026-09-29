@@ -31,24 +31,24 @@ const KIND_SPECS: Record<MagneticKind, KindSpec> = {
   block: { mass: 6, heavy: true, radius: 1.1, shape: PhysicsShapeType.BOX },
 };
 
-/** Fixed spawn list (AGENTS.md §5.3): 10 on the central platform, 6 on outer platforms. */
-const OBJECT_SPAWNS: { kind: MagneticKind; x: number; z: number }[] = [
+/** Fixed spawn list (AGENTS.md §5.3): 10 on the hub, 6 on the cardinal platforms. */
+export const OBJECT_SPAWNS: { kind: MagneticKind; x: number; z: number }[] = [
   { kind: "block", x: 0, z: 0 },
-  { kind: "crate", x: 9.5, z: 5.5 },
-  { kind: "crate", x: 5.5, z: -1 },
-  { kind: "barrel", x: -9.5, z: -5.5 },
-  { kind: "ball", x: 3.5, z: 7 },
-  { kind: "crate", x: 7, z: 2.5 },
-  { kind: "barrel", x: -7, z: -3 },
-  { kind: "ball", x: -3.5, z: -7 },
-  { kind: "crate", x: -10.5, z: 2 },
-  { kind: "ball", x: -2.5, z: 1 },
-  { kind: "crate", x: 3, z: -26 },
-  { kind: "barrel", x: -3, z: -22 },
-  { kind: "block", x: 3, z: 26 },
-  { kind: "crate", x: 26, z: -3 },
-  { kind: "ball", x: 22, z: 3 },
-  { kind: "barrel", x: -26, z: 3 },
+  { kind: "crate", x: 8, z: 10 },
+  { kind: "crate", x: 1, z: -9 },
+  { kind: "barrel", x: -9, z: -11 },
+  { kind: "ball", x: 6, z: -11 },
+  { kind: "crate", x: 10, z: 2 },
+  { kind: "barrel", x: -10, z: 11 },
+  { kind: "ball", x: -2, z: 9 },
+  { kind: "crate", x: -15, z: 6 },
+  { kind: "ball", x: 14, z: -8 },
+  { kind: "crate", x: 3, z: -36 },
+  { kind: "barrel", x: -3, z: -32 },
+  { kind: "block", x: 3, z: 36 },
+  { kind: "crate", x: 36, z: -3 },
+  { kind: "ball", x: 32, z: 3 },
+  { kind: "barrel", x: -36, z: 3 },
 ];
 
 export class MagneticObject {

@@ -65,9 +65,9 @@ export const CAMERA = {
   collisionPadding: 0.3,
   fov: 0.9,
   menuOrbitSpeed: 0.12,
-  menuOrbitRadius: 42,
-  menuOrbitHeight: 22,
-  menuPan: 13, // menu camera pans sideways so the arena sits to the right of the (left-aligned) menu card
+  menuOrbitRadius: 62,
+  menuOrbitHeight: 32,
+  menuPan: 19, // menu camera pans sideways so the arena sits to the right of the (left-aligned) menu card
 };
 
 export const ATTRACT = {
@@ -123,32 +123,39 @@ export const STABILITY = {
 };
 
 export const ARENA = {
-  centralRadius: 14,
+  hubRadius: 20,
   platformThickness: 2,
-  outerSize: 10,
-  outerDistance: 24,
-  bridgeWidth: 3,
+  cardinalSize: 14, // N/S/E/W platforms (square)
+  cardinalDistance: 34, // their centers sit this far out along the axes
+  islandRadius: 7, // NE/SE/SW/NW diagonal islands
+  islandOffset: 24, // their centers are at (±islandOffset, ±islandOffset)
+  spokeWidth: 3, // hub ↔ cardinal bridges
+  catwalkWidth: 2.5, // cardinal ↔ diagonal island catwalks
   bridgeThickness: 1,
   bridgeTopOffset: 0.01, // bridge tops sit this far below y = 0 so they never z-fight with the platforms they overlap
+  walkwayOverlap: 0.5, // walkway meshes reach this far onto the platforms they connect
   raisedBlockSize: 6,
   raisedBlockHeight: 2,
   rampWidth: 3,
   rampLength: 4,
   pillarRadius: 1,
   pillarHeight: 5,
-  wallLength: 6,
   wallHeight: 1.2,
   wallThickness: 0.5,
+  guardWallLength: 8, // E/W outer-edge walls
+  guardRailLength: 3, // N/S outer-corner rails
+  coverWallLength: 4,
+  coverWallThickness: 0.6,
   objectRespawnDelay: 5,
   emissiveFactor: 0.1, // arena materials glow with this fraction of their color (keeps them from looking washed out)
 };
 
 export const SPAWN = {
-  // 7 hand-picked central-platform points (≥2 u from obstacles, ≥4 u apart) + 4 outer platform centers.
+  // 7 hand-picked hub points (≥2 u from obstacles, ≥4 u apart) + 4 cardinal platform centers.
   // Index 0 is always the player's spawn.
   points: [
-    [-0.5, 10], [1, -10], [-10, -1], [10, 0.5], [-3, -3.5], [3, 3], [-5.5, 0.5],
-    [0, -24], [0, 24], [24, 0], [-24, 0],
+    [-0.5, 16], [0.5, -16], [-16, 0.5], [16, -0.5], [-4, -5], [4, 5], [-7, -1],
+    [0, -34], [0, 34], [34, 0], [-34, 0],
   ] as [number, number][],
   height: 1.5,
 };
@@ -173,11 +180,11 @@ export const PARTICLES = {
 };
 
 export const AI = {
-  perceptionRadius: 20,
+  perceptionRadius: 26,
   targetHoldTime: 1.5,
   safeEdge: 7, // central platform thresholds (§20)
   dangerEdge: 3,
-  outerSafeEdge: 3, // the 10×10 outer platforms are too small for the central thresholds
+  outerSafeEdge: 3.5, // cardinal platforms and islands are too small for the hub thresholds
   outerDangerEdge: 1.5,
   warningOutwardSpeed: 0.5, // WARNING only triggers a retreat roll when moving outward faster than this
   attackMinDist: 6,
@@ -193,7 +200,7 @@ export const AI = {
   dodgeDuration: 0.5,
   dodgeJumpChance: 0.5,
   stuckTime: 0.5,
-  wanderRadius: 10,
+  wanderRadius: 14,
   strafeFlipMin: 1,
   strafeFlipMax: 2,
   idleMaxSeconds: 2,
@@ -219,7 +226,10 @@ export const AI = {
   wanderObstacleMargin: 1, // wander points are re-picked if within this of a raised block or pillar
   wanderPickTries: 6, // on a bridge, AI steering is pulled back toward the bridge centerline
   lowStability: 30, // below this, cautious AIs retreat to recover
-  retreatRadius: 5, // RETREAT on the central platform moves radially inward to this radius
+  retreatRadius: 7, // RETREAT on the hub moves radially inward to this radius
+  walkwayEntryInset: 2, // routing waypoints sit this far inside a platform, in line with the walkway
+  walkwayAlignLateral: 0.8, // closer than this to a walkway's centerline counts as lined up with it
+  walkwayCorridorExtend: 2.5, // edge distance is raised near walkway ends (this far along the axis)
   rngSeed: 1337,
 };
 
@@ -281,8 +291,11 @@ export const COLORS = {
   magnetSilver: "#d9dde3",
   magnetBody: "#c8262a",
   centralPlatform: "#2466c4", // darker than it renders: hemi + sun push lit top faces well above 1×
-  outerPlatforms: ["#ff9f5a", "#9f7aff", "#5ae0a0", "#ffd65a"],
+  cardinalPlatforms: ["#ff9f5a", "#9f7aff", "#5ae0a0", "#ffd65a"], // N, S, E, W
+  islandPlatforms: ["#7ad7f0", "#c7a27a", "#7cc96a", "#e39ad0"], // NE, SE, SW, NW
   bridge: "#f2f2f2",
+  catwalk: "#d9c9a8",
+  coverWall: "#8a8fb3",
   raisedBlock: "#ff7aa8",
   ramp: "#ffb3cc",
   pillar: "#ffe6a0",

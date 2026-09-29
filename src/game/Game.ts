@@ -180,7 +180,7 @@ export class Game {
     });
     // Test-only API (window.__MM_TEST__), active only with `?test` in the URL.
     installDebugHooks({
-      scene, match: this.match, objects: this.objects, controller: this.controller,
+      scene, arena: this.arena, match: this.match, objects: this.objects, controller: this.controller,
       getState: () => this.sm.state, getDifficulty: () => this.difficulty,
     });
   }

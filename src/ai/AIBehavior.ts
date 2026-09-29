@@ -49,14 +49,18 @@ export function addStrafe(self: Character, towardX: number, towardZ: number, dir
   }
 }
 
-/** Adds a pull toward the arena center (used in WARNING zones). */
-export function addCentering(self: Character, amount: number): void {
+/** Adds a pull toward the center of the platform below (used in WARNING zones). */
+export function addCentering(self: Character, world: AIWorld, amount: number): void {
   const p = self.position;
-  const len = Math.hypot(p.x, p.z);
+  const platform = world.arena.edgeInfo(p.x, p.z).platform;
+  if (!platform || platform.kind === "bridge") return;
+  const dx = platform.cx - p.x;
+  const dz = platform.cz - p.z;
+  const len = Math.hypot(dx, dz);
   if (len < 0.5) return;
   const m = self.input.moveDir;
-  m.x += (-p.x / len) * amount;
-  m.z += (-p.z / len) * amount;
+  m.x += (dx / len) * amount;
+  m.z += (dz / len) * amount;
   const ml = Math.hypot(m.x, m.z);
   if (ml > 1) {
     m.x /= ml;

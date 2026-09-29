@@ -104,7 +104,7 @@ export class AIController {
       case Behavior.USE_OBJECT: this.useObject(world); break;
     }
 
-    this.keepMoving();
+    this.keepMoving(world);
     this.guardEdges(world);
 
     // Aim turns at a limited rate; only fire once roughly aligned.
@@ -143,10 +143,18 @@ export class AIController {
    * reached, or it is waiting on magnet power / an opening delay — circle sideways around the target
    * (or the arena center) instead.
    */
-  private keepMoving(): void {
+  private keepMoving(world: AIWorld): void {
     const self = this.self;
     const m = self.input.moveDir;
     if (m.x * m.x + m.z * m.z >= AI.minMoveInput * AI.minMoveInput) return;
+    const here = world.arena.edgeInfo(self.position.x, self.position.z).platform;
+    if (here && here.kind === "bridge") {
+      // Sideways circling would walk off a walkway: step off it along its axis instead.
+      const end = world.arena.nearerEnd(here, self.position.x, self.position.z);
+      const sign = end === here.ends![1] ? 1 : -1;
+      m.set(here.axisX * sign * AI.idleStrafe, 0, here.axisZ * sign * AI.idleStrafe);
+      return;
+    }
     const t = this.target;
     let tx = t && t.alive ? t.position.x - self.position.x : -self.position.x;
     let tz = t && t.alive ? t.position.z - self.position.z : -self.position.z;
@@ -171,9 +179,13 @@ export class AIController {
     const p = info.platform;
     if (!p) return;
     if (p.kind === "bridge") {
-      // Bridges lie on the x / z axes: replace the sideways component with a pull back to the axis.
-      if (p.axisX !== 0) m.z = -z * AI.bridgeCenterGain;
-      else m.x = -x * AI.bridgeCenterGain;
+      // Replace the sideways component (across the walkway axis) with a pull back to its centerline.
+      const px = -p.axisZ;
+      const pz = p.axisX;
+      const side = m.x * px + m.z * pz;
+      const pull = -world.arena.lateralOffset(p, x, z) * AI.bridgeCenterGain;
+      m.x += px * (pull - side);
+      m.z += pz * (pull - side);
     } else if (info.distance < AI.edgeGuardDistance) {
       world.arena.outwardDir(x, z, this.outward);
       const out = m.x * this.outward.x + m.z * this.outward.z;
@@ -402,7 +414,7 @@ export class AIController {
       addStrafe(self, dx, dz, this.strafeDir, 0.6 + this.personality.randomness * 0.4);
     }
 
-    if (this.zone === EdgeZone.WARNING) addCentering(self, this.personality.edgeCaution * 0.6);
+    if (this.zone === EdgeZone.WARNING) addCentering(self, world, this.personality.edgeCaution * 0.6);
 
     aimAt(self, t.position.x, t.position.z, this.aimError);
     this.useMagnetOn(dist, world);
@@ -436,15 +448,22 @@ export class AIController {
     const self = this.self;
     const info = world.arena.edgeInfo(self.position.x, self.position.z);
     const p = info.platform;
-    if (p && p.kind === "outer" && this.zone === EdgeZone.DANGER) {
-      steerTo(self, world, p.cx, p.cz);
-    } else if (p && p.kind === "central") {
-      // Move radially inward from where we are, so retreating AIs spread out instead of piling up at (0, 0).
-      const r = Math.hypot(self.position.x, self.position.z);
+    if (p && p.kind === "hub") {
+      // Move radially inward from where we are, so retreating AIs spread out instead of piling up at the center.
+      const rx = self.position.x - p.cx;
+      const rz = self.position.z - p.cz;
+      const r = Math.hypot(rx, rz);
       const k = r > AI.retreatRadius ? AI.retreatRadius / r : 1;
-      steerTo(self, world, self.position.x * k, self.position.z * k);
+      steerTo(self, world, p.cx + rx * k, p.cz + rz * k);
+    } else if (p && p.kind === "bridge") {
+      // Never head for a far platform from a walkway (the straight line leads off it sideways).
+      const end = world.arena.nearerEnd(p, self.position.x, self.position.z);
+      steerTo(self, world, end.cx, end.cz);
+    } else if (p) {
+      steerTo(self, world, p.cx, p.cz);
     } else {
-      steerTo(self, world, 0, 0);
+      world.arena.clampToPlatform(self.position.x, self.position.z, 2, this.outward);
+      steerTo(self, world, this.outward.x, this.outward.z);
     }
     self.input.sprint = true;
     const m = self.input.moveDir;
