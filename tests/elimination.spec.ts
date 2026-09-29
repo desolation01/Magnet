@@ -1,15 +1,20 @@
 import { expect, test } from "@playwright/test";
 import {
+  arenaSnapshot,
   debug,
   eliminate,
   expectNoErrors,
+  findObject,
   getCharacter,
   getObjects,
   openGame,
+  SITES,
   startMatch,
   teleport,
   teleportObject,
   trackErrors,
+  VOID_EAST,
+  VOID_NORTH,
   waitState,
 } from "./helpers";
 
@@ -26,8 +31,8 @@ test.describe("falling and elimination (§4, §29, §37)", () => {
     expect(before.aliveCount).toBe(11);
     expect(before.nameplates).toBe(11);
 
-    // Drop AI-05 into the void east of the arena and let gravity do the rest.
-    await teleport(page, "AI-05", 40, 3, 0);
+    // Drop AI-05 into the void east of the E cardinal and let gravity do the rest.
+    await teleport(page, "AI-05", VOID_EAST.x, 3, VOID_EAST.z);
     const mid = await getCharacter(page, "AI-05");
     expect(mid!.alive).toBe(true);
     await expect.poll(async () => (await getCharacter(page, "AI-05"))?.alive ?? false, { timeout: 5_000 }).toBe(false);
@@ -49,7 +54,7 @@ test.describe("falling and elimination (§4, §29, §37)", () => {
   test("a character just above the elimination plane is not eliminated; below it is", async ({ page }) => {
     // Hold AI-06 at y = −9 (above −10) for a moment by re-teleporting it; it must stay alive.
     for (let i = 0; i < 5; i++) {
-      await teleport(page, "AI-06", 40, -9, 0);
+      await teleport(page, "AI-06", VOID_EAST.x, -9, VOID_EAST.z);
       expect((await getCharacter(page, "AI-06"))!.alive).toBe(true);
     }
     await expect.poll(async () => (await getCharacter(page, "AI-06"))?.alive ?? false, { timeout: 5_000 }).toBe(false);
@@ -66,7 +71,7 @@ test.describe("falling and elimination (§4, §29, §37)", () => {
   });
 
   test("the player falling off the arena ends the match with GAME OVER", async ({ page }) => {
-    await teleport(page, "PLAYER", 0, 3, -40);
+    await teleport(page, "PLAYER", VOID_NORTH.x, 3, VOID_NORTH.z);
     await waitState(page, "PLAYER_ELIMINATED", 8_000);
     await expect(page.locator("#end-title")).toHaveText("GAME OVER");
     await expect(page.locator("#end-line1")).toHaveText("Opponents Remaining: 10");
@@ -77,16 +82,19 @@ test.describe("falling and elimination (§4, §29, §37)", () => {
   test("magnetic objects that fall off are disposed and respawn", async ({ page }) => {
     const count0 = (await getObjects(page)).length;
     const bodies0 = (await debug(page)).bodies;
-    await teleportObject(page, 13, 40, 3, 0); // crate from the E platform
-    await expect.poll(async () => (await getObjects(page)).some((o) => o.index === 13), { timeout: 5_000 }).toBe(false);
+    const crateIndex = await findObject(page, "crate", SITES.E); // the crate on the E cardinal
+    const spawn = (await arenaSnapshot(page)).objectSpawns[crateIndex];
+    await teleportObject(page, crateIndex, VOID_EAST.x, 3, VOID_EAST.z);
+    await expect.poll(async () => (await getObjects(page)).some((o) => o.index === crateIndex), { timeout: 5_000 }).toBe(false);
     expect((await getObjects(page)).length).toBe(count0 - 1);
-    expect((await debug(page)).bodies).toBe(bodies0 - 1);
+    // __MM_DEBUG__ is refreshed at 4 Hz, so poll instead of reading it once.
+    await expect.poll(async () => (await debug(page)).bodies, { timeout: 2_000 }).toBe(bodies0 - 1);
     // Respawns at its spawn point after ARENA.objectRespawnDelay (5 s).
-    await expect.poll(async () => (await getObjects(page)).find((o) => o.index === 13) ?? null, { timeout: 10_000 })
-      .toEqual(expect.objectContaining({ index: 13, alive: true }));
-    const crate = (await getObjects(page)).find((o) => o.index === 13)!;
-    expect(Math.hypot(crate.x - 26, crate.z + 3)).toBeLessThan(1);
-    expect((await debug(page)).bodies).toBe(bodies0);
+    await expect.poll(async () => (await getObjects(page)).find((o) => o.index === crateIndex) ?? null, { timeout: 10_000 })
+      .toEqual(expect.objectContaining({ index: crateIndex, alive: true }));
+    const crate = (await getObjects(page)).find((o) => o.index === crateIndex)!;
+    expect(Math.hypot(crate.x - spawn.x, crate.z - spawn.z)).toBeLessThan(1);
+    await expect.poll(async () => (await debug(page)).bodies, { timeout: 2_000 }).toBe(bodies0);
     expectNoErrors(errors);
   });
 });

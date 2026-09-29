@@ -1,7 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
+import { ATTRACT, REPULSE } from "../src/config";
 import {
+  clearPlatformObjects,
   dist2D,
   expectNoErrors,
+  findObject,
   getCharacter,
   getObjects,
   getPlayer,
@@ -10,6 +13,7 @@ import {
   parkAIFarAway,
   playerInput,
   sampleFrames,
+  SITES,
   startMatch,
   teleport,
   teleportObject,
@@ -17,13 +21,19 @@ import {
   waitGrounded,
 } from "./helpers";
 
-// Test site: the E outer platform (x 19..29, z −5..5). The player stands at its east end and aims
-// west (−X, yaw −π/2) along the platform toward the bridge. AI are frozen and parked elsewhere.
+// Test site: the E cardinal platform (center E = (34, 0), 14 × 14). The player stands 3.5 east of its
+// center and aims west (−X, yaw −π/2) along the platform toward the spoke bridge. AI are frozen and
+// parked elsewhere; the platform's other props are moved to its north side, out of the firing lane.
+const E = SITES.E;
 const WEST = -Math.PI / 2;
-const NORTH_Z = 0; // yaw 0 faces +Z
-const SITE = { x: 27.5, y: 1.2, z: 0 };
-const CRATE = 13; // spawns at (26, −3) on the E platform
-const BALL = 14; // spawns at (22, 3) on the E platform
+const TOWARD_PLUS_Z = 0; // yaw 0 faces +Z (south)
+const SITE = { x: E.x + 3.5, y: 1.2, z: 0 };
+// ATTRACT.characterPullTime (1 s) and ATTRACT.regrabLockout (3 s) as of commit 4f5da36. Kept as literals:
+// the character-pull rules are being reworked in another session.
+const PULL_MS = 1_000;
+const REGRAB_LOCKOUT_MS = 3_000;
+/** Spawn index of the crate used by the test (the crate nearest the E platform). */
+let CRATE = -1;
 
 const getObject = async (page: Page, index: number) => (await getObjects(page)).find((o) => o.index === index)!;
 
@@ -31,9 +41,9 @@ async function setupSite(page: Page): Promise<void> {
   await openGame(page);
   await startMatch(page, { freezeAI: true });
   await parkAIFarAway(page);
-  // Clear the E platform props out of the firing lane.
-  await teleportObject(page, BALL, 27, 0.6, -4.2);
-  await teleportObject(page, CRATE, 25, 0.6, -4.2);
+  CRATE = await findObject(page, "crate", E);
+  await teleportObject(page, CRATE, E.x + 1, 0.6, -2.5);
+  await clearPlatformObjects(page, "E", [CRATE]);
   await teleport(page, "PLAYER", SITE.x, SITE.y, SITE.z);
   await playerInput(page, { aimYaw: WEST });
   await waitGrounded(page);
@@ -47,7 +57,7 @@ test.describe("magnet: attract (§8, §25)", () => {
   });
 
   test("attract pulls a crate physically toward the player and holds it", async ({ page }) => {
-    await teleportObject(page, CRATE, 21.5, 0.6, 0);
+    await teleportObject(page, CRATE, E.x - 2.5, 0.6, 0);
     await page.waitForTimeout(300);
     const player = await getPlayer(page);
     const c0 = await getObject(page, CRATE);
@@ -71,7 +81,7 @@ test.describe("magnet: attract (§8, §25)", () => {
   });
 
   test("attract pulls an AI toward the player", async ({ page }) => {
-    await teleport(page, "AI-01", 21.5, 1.2, 0);
+    await teleport(page, "AI-01", E.x - 2.5, 1.2, 0);
     await waitGrounded(page, "AI-01");
     const player = await getPlayer(page);
     const a0 = (await getCharacter(page, "AI-01"))!;
@@ -80,8 +90,8 @@ test.describe("magnet: attract (§8, §25)", () => {
     await playerInput(page, { attract: true });
     // The capture must happen inside the 1 s pull window (ATTRACT.characterPullTime).
     const [samples] = await Promise.all([
-      sampleFrames(page, { character: "AI-01" }, 1_000),
-      expect.poll(async () => (await getCharacter(page, "AI-01"))!.heldBy, { timeout: 1_000, intervals: [50] }).toBe("PLAYER"),
+      sampleFrames(page, { character: "AI-01" }, PULL_MS),
+      expect.poll(async () => (await getCharacter(page, "AI-01"))!.heldBy, { timeout: PULL_MS, intervals: [50] }).toBe("PLAYER"),
     ]);
     const d1 = dist2D(samples[samples.length - 1], player);
     console.log(`AI distance ${d0.toFixed(2)} → ${d1.toFixed(2)}, max per-frame step ${maxStep(samples).toFixed(2)}`);
@@ -93,7 +103,7 @@ test.describe("magnet: attract (§8, §25)", () => {
   });
 
   test("a character can only be pulled for 1 s in a row, then is ignored for 3 s", async ({ page }) => {
-    await teleport(page, "AI-01", 21.5, 1.2, 0);
+    await teleport(page, "AI-01", E.x - 2.5, 1.2, 0);
     await waitGrounded(page, "AI-01");
     // Per frame, for `ms`: is AI-01 being dragged or held by the player's magnet?
     const sample = (ms: number) =>
@@ -131,10 +141,10 @@ test.describe("magnet: attract (§8, §25)", () => {
     console.log(`pull runs: ${runs.map((r) => `${r.on ? "ON" : "off"} ${Math.round(r.ms)}`).join(", ")}`);
     const first = runs.findIndex((r) => r.on);
     expect(first).toBeGreaterThanOrEqual(0);
-    expect(runs[first].ms).toBeGreaterThan(850);
-    expect(runs[first].ms).toBeLessThan(1_150);
+    expect(runs[first].ms).toBeGreaterThan(PULL_MS - 150);
+    expect(runs[first].ms).toBeLessThan(PULL_MS + 150);
     expect(runs.slice(first + 1).every((r) => !r.on), "no second pull during the 3 s lockout").toBe(true);
-    expect(runs[first + 1].ms).toBeGreaterThan(2_500);
+    expect(runs[first + 1].ms).toBeGreaterThan(REGRAB_LOCKOUT_MS - 500);
 
     // After the lockout (and some power regen) the same magnet can pull it again.
     await page.waitForTimeout(1_500);
@@ -145,10 +155,10 @@ test.describe("magnet: attract (§8, §25)", () => {
     expectNoErrors(errors);
   });
 
-  test("attract does not reach targets beyond ~10.5 units or outside the cone", async ({ page }) => {
-    // 12 units west (on the E bridge) and 6 units behind-left (outside the cone).
-    await teleportObject(page, CRATE, 15.5, 0.6, 0);
-    await teleport(page, "AI-01", 24, 1.2, 4);
+  test(`attract does not reach targets beyond ~${ATTRACT.range} units or outside the cone`, async ({ page }) => {
+    // 12 units west (on the E spoke bridge) and 6 units behind-left (outside the cone).
+    await teleportObject(page, CRATE, SITE.x - (ATTRACT.range + 1.5), 0.6, 0);
+    await teleport(page, "AI-01", E.x, 1.2, 4);
     await page.waitForTimeout(500);
     const c0 = await getObject(page, CRATE);
     const a0 = (await getCharacter(page, "AI-01"))!;
@@ -193,8 +203,8 @@ test.describe("magnet: repulse (§9, §26)", () => {
   });
 
   test("repulse pushes an AI and a crate away and shows the cooldown in the HUD", async ({ page }) => {
-    await teleport(page, "AI-01", 23.5, 1.2, 0.8);
-    await teleportObject(page, CRATE, 24, 0.6, -1);
+    await teleport(page, "AI-01", E.x - 0.5, 1.2, 0.8);
+    await teleportObject(page, CRATE, E.x, 0.6, -1);
     await waitGrounded(page, "AI-01");
     await page.waitForTimeout(300);
     const player = await getPlayer(page);
@@ -238,19 +248,20 @@ test.describe("magnet: repulse (§9, §26)", () => {
     expect(first).toBeGreaterThanOrEqual(0);
     const numbers = texts.slice(first, texts.lastIndexOf("READY")).map((t) => parseFloat(t));
     expect(numbers.length).toBeGreaterThan(5);
-    expect(numbers[0]).toBeGreaterThanOrEqual(3.8);
+    expect(numbers[0]).toBeGreaterThanOrEqual(REPULSE.cooldown - 0.2);
     for (let i = 1; i < numbers.length; i++) expect(numbers[i]).toBeLessThanOrEqual(numbers[i - 1]);
     const duration = (seen[seen.length - 1].t - seen[first].t) / 1000;
     console.log(`cooldown wall-clock duration ${duration.toFixed(2)} s`);
-    expect(duration).toBeGreaterThan(3.6);
-    expect(duration).toBeLessThan(5.5);
+    expect(duration).toBeGreaterThan(REPULSE.cooldown - 0.4);
+    expect(duration).toBeLessThan(REPULSE.cooldown + 1.5);
     expectNoErrors(errors);
   });
 
   test("repulse can knock an AI off a platform, which eliminates it", async ({ page }) => {
-    await teleport(page, "PLAYER", 24, 1.2, -2);
-    await teleport(page, "AI-01", 24, 1.2, 1.5);
-    await playerInput(page, { aimYaw: NORTH_Z });
+    // AI-01 stands 3.5 units in front of the player and 3.5 units from the platform's +Z edge.
+    await teleport(page, "PLAYER", E.x, 1.2, 0);
+    await teleport(page, "AI-01", E.x, 1.2, 3.5);
+    await playerInput(page, { aimYaw: TOWARD_PLUS_Z });
     await waitGrounded(page);
     await waitGrounded(page, "AI-01");
     await playerInput(page, { repulse: true });
@@ -269,7 +280,7 @@ test.describe("magnet: repulse (§9, §26)", () => {
   for (const releaseAttract of [true, false]) {
     const how = releaseAttract ? "releasing attract at the same time" : "while attract is still held (LMB held + RMB click)";
     test(`repulse launches a held crate ${how}`, async ({ page }) => {
-      await teleportObject(page, CRATE, 23, 0.6, 0);
+      await teleportObject(page, CRATE, E.x - 1, 0.6, 0);
       await playerInput(page, { attract: true });
       await expect.poll(async () => (await getObject(page, CRATE)).heldBy, { timeout: 4_000 }).toBe("PLAYER");
       await page.waitForTimeout(300);
@@ -305,7 +316,7 @@ test.describe("magnet: repulse (§9, §26)", () => {
 
   test("one-shot particle bursts finish and dispose themselves during a match", async ({ page }) => {
     for (let i = 0; i < 3; i++) {
-      await expect.poll(async () => (await getPlayer(page)).repulseCooldown, { timeout: 4_000 }).toBe(0);
+      await expect.poll(async () => (await getPlayer(page)).repulseCooldown, { timeout: REPULSE.cooldown * 1000 + 2_000 }).toBe(0);
       await playerInput(page, { repulse: true });
       await page.waitForTimeout(300);
     }

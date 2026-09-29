@@ -4,12 +4,15 @@ import {
   eliminate,
   eliminateAllAI,
   expectNoErrors,
+  findObject,
   freezeAI,
   openGame,
   startMatch,
   teleport,
   teleportObject,
   trackErrors,
+  VOID_EAST,
+  VOID_SOUTH,
   waitState,
 } from "./helpers";
 
@@ -38,8 +41,9 @@ async function churn(page: Page): Promise<void> {
   await page.waitForTimeout(1_500); // let the AI fight a little (particles, sounds, holds)
   await freezeAI(page, true);
   await eliminate(page, "AI-01");
-  await teleport(page, "AI-02", 40, 3, 0);
-  await teleportObject(page, 0, 0, 3, 40); // the big block falls; a respawn timer is pending
+  await teleport(page, "AI-02", VOID_EAST.x, 3, VOID_EAST.z);
+  // The big hub block falls; a respawn timer is pending.
+  await teleportObject(page, await findObject(page, "block", { x: 0, z: 0 }), VOID_SOUTH.x, 3, VOID_SOUTH.z);
   await page.evaluate(() => window.__MM_TEST__!.playerInput({ repulse: true }));
   await page.waitForTimeout(1_500);
 }
