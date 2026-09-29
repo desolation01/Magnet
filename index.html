@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Magnet Mayhem</title>
+    <link rel="stylesheet" href="/src/ui/style.css" />
+  </head>
+  <body>
+    <canvas id="renderCanvas"></canvas>
+
+    <div id="ui">
+      <!-- HUD -->
+      <div id="hud" class="hidden">
+        <div id="hud-player" class="panel">
+          <div class="hud-name">PLAYER</div>
+          <div class="bar-label">STABILITY</div>
+          <div class="bar"><div id="bar-stability" class="bar-fill stability"></div></div>
+          <div class="bar-label">MAGNET POWER</div>
+          <div class="bar"><div id="bar-power" class="bar-fill power"></div></div>
+        </div>
+        <div id="hud-opponents" class="panel">OPPONENTS LEFT: <span id="opponents-left">10</span></div>
+        <div id="hud-time" class="panel">
+          <div class="small-label">MATCH TIME</div>
+          <div id="match-time">00:00</div>
+        </div>
+        <div id="hud-controls" class="panel">
+          <span><b>[LEFT CLICK]</b> ATTRACT</span>
+          <span><b>[RIGHT CLICK]</b> REPULSE</span>
+          <span><b>[SPACE]</b> JUMP</span>
+          <span><b>[SHIFT]</b> SPRINT</span>
+        </div>
+        <div id="hud-repulse" class="panel ready">
+          <div class="small-label">REPULSE</div>
+          <div id="repulse-status">READY</div>
+        </div>
+        <div id="notifications"></div>
+        <div id="lock-hint" class="hidden">CLICK TO AIM</div>
+      </div>
+
+      <!-- Countdown -->
+      <div id="countdown" class="hidden"></div>
+
+      <!-- Main menu -->
+      <div id="menu" class="overlay hidden">
+        <div class="card">
+          <h1 class="title">MAGNET<br />MAYHEM</h1>
+          <p class="subtitle">Knock everyone off the arena with your magnet!</p>
+          <div class="difficulty">
+            <button class="diff" data-difficulty="EASY">EASY</button>
+            <button class="diff" data-difficulty="NORMAL">NORMAL</button>
+            <button class="diff" data-difficulty="HARD">HARD</button>
+          </div>
+          <button id="btn-play" class="big">PLAY</button>
+          <p class="help">WASD move · SPACE jump · SHIFT sprint · Mouse aim<br />LEFT CLICK attract · RIGHT CLICK repulse</p>
+        </div>
+      </div>
+
+      <!-- End screen -->
+      <div id="endscreen" class="overlay hidden">
+        <div class="card">
+          <h1 id="end-title" class="title"></h1>
+          <p id="end-line1" class="end-line"></p>
+          <p id="end-line2" class="end-line"></p>
+          <div class="row">
+            <button id="btn-restart" class="big"></button>
+            <button id="btn-menu" class="big secondary">MENU</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
