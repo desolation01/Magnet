@@ -23,6 +23,24 @@ export const MOVE = {
 
 export const OBJECTS = {
   maxSpeed: 30, // safety cap so stacked repulses cannot turn props into bullets
+  restitution: 0.05, // bounciness of every prop except the spring ball
+  anvil: {
+    size: [1.2, 0.8, 0.8] as [number, number, number], // box collider (x = horn axis, y, z)
+    mass: 10, // heavy: repulse gives it REPULSE.heavyFactor
+    hitRadius: 0.6, // hit/capture radius for the magnet and object hits
+    color: "#4a4f5a", // dark iron
+    emissive: "#141c28",
+  },
+  springBall: {
+    diameter: 0.9,
+    mass: 0.8,
+    restitution: 0.9, // very bouncy; Havok combines restitution with MAXIMUM, so it ricochets off everything
+    hitRadius: 0.45,
+    stripes: 8, // alternating wedges around the ball
+    stripeColors: ["#d4dce6", "#e8365d"] as [string, string],
+    emissive: "#2a1420",
+    textureSize: 64,
+  },
 };
 
 export const CHARACTER = {
