@@ -1,12 +1,15 @@
 import { expect, test, type Page } from "@playwright/test";
 import {
+  clearPlatformObjects,
   dist2D,
   expectNoErrors,
+  findObject,
   getObjects,
   getPlayer,
   openGame,
   parkAIFarAway,
   sampleFrames,
+  SITES,
   startMatch,
   teleport,
   teleportObject,
@@ -46,8 +49,9 @@ async function stubPointerLock(page: Page): Promise<void> {
 // A point over the canvas (the #ui overlay is pointer-events: none).
 const X = 640;
 const Y = 420;
-const CRATE = 13; // E-platform crate
-const BALL = 14; // E-platform ball
+// Test site: the E cardinal platform (SITES.E). CRATE = spawn index of the crate nearest to it.
+const E = SITES.E;
+let CRATE = -1;
 
 test.describe("real mouse + keyboard input (§6, §8, §9, §2.2)", () => {
   let errors: string[] = [];
@@ -57,9 +61,10 @@ test.describe("real mouse + keyboard input (§6, §8, §9, §2.2)", () => {
     await openGame(page);
     await startMatch(page, { freezeAI: true });
     await parkAIFarAway(page);
-    await teleportObject(page, BALL, 27, 0.6, -4.2);
-    await teleportObject(page, CRATE, 20.5, 0.6, 4);
-    await teleport(page, "PLAYER", 24, 1.2, 3);
+    CRATE = await findObject(page, "crate", E);
+    await teleportObject(page, CRATE, E.x - 3.5, 0.6, 4);
+    await clearPlatformObjects(page, "E", [CRATE]);
+    await teleport(page, "PLAYER", E.x, 1.2, 3);
     await waitGrounded(page);
     // Sanity: the stubbed lock was taken when the countdown started, and the canvas is under the cursor.
     expect(await page.evaluate(() => document.pointerLockElement?.id ?? null)).toBe("renderCanvas");

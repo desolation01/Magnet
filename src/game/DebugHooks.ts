@@ -1,9 +1,10 @@
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import type { Scene } from "@babylonjs/core/scene";
 import type { Arena } from "../arena/Arena";
-import type { ArenaObjects } from "../arena/ArenaObjects";
+import { BOXES, CYLINDERS, RAMPS } from "../arena/ArenaLayout";
+import { OBJECT_SPAWNS, type ArenaObjects } from "../arena/ArenaObjects";
 import type { Character, CharacterInput } from "../character/Character";
-import type { Difficulty } from "../config";
+import { ARENA, SPAWN, type Difficulty } from "../config";
 import type { PlayerController } from "../player/PlayerController";
 import type { GameState } from "./GameState";
 import type { MatchManager } from "./MatchManager";
@@ -61,6 +62,57 @@ export interface MagnetStats {
   repulses: number;
 }
 
+/** Serializable footprint of a base platform or walkway (see Arena.Platform). */
+export interface PlatformSnapshot {
+  name: string;
+  kind: string;
+  shape: "circle" | "rect";
+  cx: number;
+  cz: number;
+  radius: number;
+  hx: number;
+  hz: number;
+  axisX: number;
+  axisZ: number;
+  halfLen: number;
+  halfWidth: number;
+  ends: [string, string] | null;
+}
+
+/** Axis-aligned rect (hx, hz half extents) or circle (radius hx) footprint on the XZ plane. */
+export interface FootprintSnapshot {
+  name?: string;
+  x: number;
+  z: number;
+  hx: number;
+  hz: number;
+  circle: boolean;
+}
+
+export interface ArenaSnapshot {
+  /** Base platforms first (routing nodes), then walkways. */
+  platforms: PlatformSnapshot[];
+  /** Footprints the AI avoids (Arena.obstacles). */
+  obstacles: FootprintSnapshot[];
+  /** Every static collider standing on the platforms (blocks, walls, pillars, ramps) from ArenaLayout. */
+  colliders: FootprintSnapshot[];
+  spawns: [number, number][];
+  objectSpawns: { kind: string; x: number; z: number }[];
+}
+
+export interface EdgeSnapshot {
+  platform: string | null;
+  kind: string | null;
+  distance: number;
+}
+
+export interface RouteResult {
+  /** Waypoints returned by successive Arena.nextWaypoint calls, starting from the from-point. */
+  points: { x: number; z: number }[];
+  /** True when the last waypoint equals the (platform-clamped) target. */
+  reached: boolean;
+}
+
 /** Scene resource counts used by the leak test. */
 export interface ResourceCounts {
   meshes: number;
@@ -99,6 +151,14 @@ export interface TestApi {
   counts(): ResourceCounts;
   /** Scene particle systems with their render readiness (a disposed texture makes them not ready). */
   particleSystems(): { name: string; started: boolean; ready: boolean }[];
+  /** Static arena layout: platforms, walkways, obstacle/collider footprints, spawn lists. */
+  arena(): ArenaSnapshot;
+  /** Arena.edgeInfo for a point. */
+  edgeInfo(x: number, z: number): EdgeSnapshot;
+  /** Arena.isObstructed for a point. */
+  isObstructed(x: number, z: number, margin: number): boolean;
+  /** Follows Arena.nextWaypoint from (fx, fz) toward (tx, tz) for at most `maxHops` waypoints. */
+  route(fx: number, fz: number, tx: number, tz: number, maxHops: number): RouteResult;
 }
 
 declare global {
@@ -121,7 +181,7 @@ const r2 = (n: number): number => Math.round(n * 100) / 100;
 
 export function installDebugHooks(ctx: DebugContext): void {
   if (!new URLSearchParams(location.search).has("test")) return;
-  const { scene, match, objects, controller } = ctx;
+  const { scene, arena, match, objects, controller } = ctx;
 
   // ---- player input override (applied right after the real controller writes its input)
   const override: TestInput = {};
@@ -203,6 +263,42 @@ export function installDebugHooks(ctx: DebugContext): void {
     }
   });
 
+  const arenaSnapshot = (): ArenaSnapshot => ({
+    platforms: arena.platforms.map((p) => ({
+      name: p.name, kind: p.kind, shape: p.shape, cx: p.cx, cz: p.cz, radius: p.radius, hx: p.hx, hz: p.hz,
+      axisX: p.axisX, axisZ: p.axisZ, halfLen: p.halfLen, halfWidth: p.halfWidth,
+      ends: p.ends ? [p.ends[0].name, p.ends[1].name] : null,
+    })),
+    obstacles: arena.obstacles.map((o) => ({ x: o.x, z: o.z, hx: o.hx, hz: o.hz, circle: o.circle })),
+    colliders: [
+      ...BOXES.map((b) => ({ name: b.name, x: b.x, z: b.z, hx: b.w / 2, hz: b.d / 2, circle: false })),
+      ...CYLINDERS.map((c) => ({ name: c.name, x: c.x, z: c.z, hx: c.radius, hz: c.radius, circle: true })),
+      ...RAMPS.map((r) => ({ name: r.name, x: r.x, z: r.z, hx: ARENA.rampLength / 2, hz: ARENA.rampWidth / 2, circle: false })),
+    ],
+    spawns: SPAWN.points.map(([x, z]) => [x, z] as [number, number]),
+    objectSpawns: OBJECT_SPAWNS.map((o) => ({ kind: o.kind, x: o.x, z: o.z })),
+  });
+
+  const route = (fx: number, fz: number, tx: number, tz: number, maxHops: number): RouteResult => {
+    const points: { x: number; z: number }[] = [];
+    const out = { x: 0, z: 0 };
+    let x = fx;
+    let z = fz;
+    for (let i = 0; i < maxHops; i++) {
+      arena.nextWaypoint(x, z, tx, tz, out);
+      const same = Math.hypot(out.x - x, out.z - z) < 1e-6;
+      if (same && points.length) return { points, reached: false }; // no progress: a routing loop or dead end
+      points.push({ x: out.x, z: out.z });
+      // nextWaypoint returns the (platform-clamped) target itself once no walkway is left to cross.
+      arena.nextWaypoint(out.x, out.z, tx, tz, out);
+      const last = points[points.length - 1];
+      if (Math.hypot(out.x - last.x, out.z - last.z) < 1e-6) return { points, reached: true };
+      x = last.x;
+      z = last.z;
+    }
+    return { points, reached: false };
+  };
+
   const api: TestApi = {
     state: () => ctx.getState(),
     difficulty: () => ctx.getDifficulty(),
@@ -270,6 +366,13 @@ export function installDebugHooks(ctx: DebugContext): void {
     stats: () => Object.fromEntries(stats),
     particleSystems: () =>
       scene.particleSystems.map((ps) => ({ name: ps.name, started: ps.isStarted(), ready: ps.isReady() })),
+    arena: arenaSnapshot,
+    edgeInfo: (x, z) => {
+      const e = arena.edgeInfo(x, z);
+      return { platform: e.platform?.name ?? null, kind: e.platform?.kind ?? null, distance: e.distance };
+    },
+    isObstructed: (x, z, margin) => arena.isObstructed(x, z, margin),
+    route,
     counts: () => {
       const physics = scene.getPhysicsEngine() as unknown as { getBodies?: () => unknown[] } | null;
       return {

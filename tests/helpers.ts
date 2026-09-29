@@ -1,7 +1,52 @@
 import { expect, type Page } from "@playwright/test";
-import type { CharacterSnapshot, MagnetStats, ObjectSnapshot, TestInput } from "../src/game/DebugHooks";
+import { ARENA, SPAWN } from "../src/config";
+import type {
+  ArenaSnapshot,
+  CharacterSnapshot,
+  EdgeSnapshot,
+  MagnetStats,
+  ObjectSnapshot,
+  RouteResult,
+  TestInput,
+} from "../src/game/DebugHooks";
 
-export type { CharacterSnapshot, ObjectSnapshot };
+export type { ArenaSnapshot, CharacterSnapshot, EdgeSnapshot, ObjectSnapshot, RouteResult };
+
+export interface XZ {
+  x: number;
+  z: number;
+}
+
+const C = ARENA.cardinalDistance;
+const I = ARENA.islandOffset;
+
+/**
+ * Named test sites derived from the layout in src/config.ts (N = −Z, E = +X, platform tops at y = 0).
+ * Cardinal platforms are ARENA.cardinalSize squares centered at distance ARENA.cardinalDistance on the
+ * axes; islands are circles of ARENA.islandRadius at (±islandOffset, ±islandOffset).
+ */
+export const SITES = {
+  HUB: { x: 0, z: 0 },
+  PLAYER_SPAWN: { x: SPAWN.points[0][0], z: SPAWN.points[0][1] },
+  N: { x: 0, z: -C },
+  S: { x: 0, z: C },
+  E: { x: C, z: 0 },
+  W: { x: -C, z: 0 },
+  NE: { x: I, z: -I },
+  SE: { x: I, z: I },
+  SW: { x: -I, z: I },
+  NW: { x: -I, z: -I },
+} satisfies Record<string, XZ>;
+
+/** Half size of a cardinal platform (E spans x = E.x ± CARDINAL_HALF, z = ± CARDINAL_HALF). */
+export const CARDINAL_HALF = ARENA.cardinalSize / 2;
+
+/** Open sky well beyond the E cardinal's outer edge (x = E.x + CARDINAL_HALF); anything here falls. */
+export const VOID_EAST: XZ = { x: C + CARDINAL_HALF + 9, z: 0 };
+/** Open sky well beyond the N cardinal's outer edge. */
+export const VOID_NORTH: XZ = { x: 0, z: -(C + CARDINAL_HALF + 9) };
+/** Open sky beyond the S cardinal's outer edge. */
+export const VOID_SOUTH: XZ = { x: 0, z: C + CARDINAL_HALF + 9 };
 
 /** Collects console errors and uncaught page errors for the whole test. */
 export function trackErrors(page: Page): string[] {
@@ -89,15 +134,74 @@ export const freezeAI = (page: Page, frozen: boolean): Promise<void> =>
 
 export const stats = (page: Page): Promise<Record<string, MagnetStats>> => page.evaluate(() => window.__MM_TEST__!.stats());
 
+// ---------------------------------------------------------------- arena queries (window.__MM_TEST__)
+
+export const arenaSnapshot = (page: Page): Promise<ArenaSnapshot> => page.evaluate(() => window.__MM_TEST__!.arena());
+
+export const edgeInfo = (page: Page, x: number, z: number): Promise<EdgeSnapshot> =>
+  page.evaluate(([a, b]) => window.__MM_TEST__!.edgeInfo(a, b), [x, z] as const);
+
+export const route = (page: Page, from: XZ, to: XZ, maxHops = 8): Promise<RouteResult> =>
+  page.evaluate(([f, t, n]) => window.__MM_TEST__!.route(f.x, f.z, t.x, t.z, n), [from, to, maxHops] as const);
+
+/** Distance from a point to a rect/circle footprint (0 inside). */
+export function footprintDistance(p: XZ, f: { x: number; z: number; hx: number; hz: number; circle: boolean }): number {
+  if (f.circle) return Math.max(0, Math.hypot(p.x - f.x, p.z - f.z) - f.hx);
+  const dx = Math.max(0, Math.abs(p.x - f.x) - f.hx);
+  const dz = Math.max(0, Math.abs(p.z - f.z) - f.hz);
+  return Math.hypot(dx, dz);
+}
+
 /**
- * Moves every AI to the W, N and S outer platforms (clear of props) so they cannot interfere with a
- * player-focused test. The E platform (x 19..29, z −5..5) and the E half of the central platform
- * are left free as the test site.
+ * Spawn index of the live magnetic object of `kind` nearest to `near`. Object lists change as props are
+ * added, so tests never hard-code spawn indices.
  */
-export async function parkAIFarAway(page: Page): Promise<void> {
-  const spots: [number, number][] = [[-22, -3], [-22, 3], [-26, -3], [0, -24], [3, -22], [-3, -26], [0, 24], [-3, 22], [-3, 26], [0, 21]];
+export async function findObject(page: Page, kind: string, near: XZ): Promise<number> {
+  const objs = (await getObjects(page)).filter((o) => o.kind === kind && o.alive);
+  if (!objs.length) throw new Error(`no live ${kind} object`);
+  objs.sort((a, b) => dist2D(a, near) - dist2D(b, near));
+  return objs[0].index;
+}
+
+/**
+ * Free standing spots on a base platform: a grid at `spacing`, at least `edge` inside the rim, clear of
+ * static colliders/obstacles by `clear`, and at least `clear` from every point in `avoid`.
+ */
+export async function freeSpots(page: Page, platform: string, opts: { spacing?: number; edge?: number; clear?: number; avoid?: XZ[] } = {}): Promise<XZ[]> {
+  const { spacing = 2.5, edge = 2, clear = 2, avoid = [] } = opts;
+  const a = await arenaSnapshot(page);
+  const p = a.platforms.find((q) => q.name === platform);
+  if (!p) throw new Error(`unknown platform ${platform}`);
+  const ext = p.shape === "circle" ? p.radius : Math.max(p.hx, p.hz);
+  const blockers = [...a.colliders, ...a.obstacles];
+  const out: XZ[] = [];
+  for (let dx = -ext; dx <= ext; dx += spacing) {
+    for (let dz = -ext; dz <= ext; dz += spacing) {
+      const s = { x: p.cx + dx, z: p.cz + dz };
+      const e = await edgeInfo(page, s.x, s.z);
+      if (e.platform !== platform || e.distance < edge) continue;
+      if (blockers.some((b) => footprintDistance(s, b) < clear)) continue;
+      if (avoid.some((v) => dist2D(v, s) < clear)) continue;
+      out.push(s);
+    }
+  }
+  return out;
+}
+
+/**
+ * Moves every AI onto the given platforms (default W, N and S cardinals), on free spots away from props,
+ * so they cannot interfere with a player-focused test. The E cardinal and the hub are left free.
+ */
+export async function parkAIFarAway(page: Page, platforms: string[] = ["W", "N", "S"]): Promise<void> {
+  const objs = (await getObjects(page)).filter((o) => o.alive);
+  const lists = await Promise.all(platforms.map((p) => freeSpots(page, p, { avoid: objs })));
+  const spots: XZ[] = [];
+  for (let i = 0; spots.length < 10 && lists.some((l) => i < l.length); i++) {
+    for (const l of lists) if (i < l.length) spots.push(l[i]);
+  }
   const names = (await getCharacters(page)).filter((c) => c.name !== "PLAYER" && c.alive).map((c) => c.name);
-  for (let i = 0; i < names.length; i++) await teleport(page, names[i], spots[i][0], 1.5, spots[i][1]);
+  if (spots.length < names.length) throw new Error(`only ${spots.length} parking spots on ${platforms.join(",")}`);
+  for (let i = 0; i < names.length; i++) await teleport(page, names[i], spots[i].x, SPAWN.height, spots[i].z);
 }
 
 export const dist2D = (a: { x: number; z: number }, b: { x: number; z: number }): number => Math.hypot(a.x - b.x, a.z - b.z);
@@ -153,4 +257,22 @@ export async function waitGrounded(page: Page, name = "PLAYER"): Promise<void> {
       return !!c && c.grounded && Math.abs(c.vy) < 0.5 && Math.hypot(c.vx, c.vz) < 0.5;
     }, { timeout: 5_000 })
     .toBe(true);
+}
+
+/**
+ * Moves every live magnetic object standing on `platform` (except `keep`) into a row along its north
+ * (−Z) side, out of an east–west firing lane through the platform center. Returns the moved indices.
+ */
+export async function clearPlatformObjects(page: Page, platform: string, keep: number[] = []): Promise<number[]> {
+  const a = await arenaSnapshot(page);
+  const p = a.platforms.find((q) => q.name === platform)!;
+  const moved: number[] = [];
+  for (const o of await getObjects(page)) {
+    if (!o.alive || keep.includes(o.index)) continue;
+    if ((await edgeInfo(page, o.x, o.z)).platform !== platform) continue;
+    const x = p.cx + 3 - 1.5 * moved.length;
+    await teleportObject(page, o.index, x, 1.2, p.cz - (CARDINAL_HALF - 2));
+    moved.push(o.index);
+  }
+  return moved;
 }

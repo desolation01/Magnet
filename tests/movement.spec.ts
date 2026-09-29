@@ -6,13 +6,16 @@ import {
   parkAIFarAway,
   playerInput,
   sampleFrames,
+  SITES,
   startMatch,
   teleport,
   trackErrors,
   waitGrounded,
 } from "./helpers";
 
-// Test site: the E outer platform (x 19..29, z −5..5, top at y = 0). AI are frozen and parked elsewhere.
+// Test site: the E cardinal platform (center SITES.E = (34, 0), 14 × 14, top at y = 0). AI are frozen
+// and parked elsewhere.
+const E = SITES.E;
 test.describe("player movement (§6)", () => {
   let errors: string[] = [];
   test.beforeEach(async ({ page }) => {
@@ -23,7 +26,7 @@ test.describe("player movement (§6)", () => {
   });
 
   test("moves with moveDir in both axes and stops quickly when released", async ({ page }) => {
-    await teleport(page, "PLAYER", 24, 1.2, -3);
+    await teleport(page, "PLAYER", E.x, 1.2, -3);
     await waitGrounded(page);
     const p0 = await getPlayer(page);
 
@@ -45,7 +48,7 @@ test.describe("player movement (§6)", () => {
   });
 
   test("jump raises the player and lands again", async ({ page }) => {
-    await teleport(page, "PLAYER", 24, 1.2, 0);
+    await teleport(page, "PLAYER", E.x, 1.2, 0);
     await waitGrounded(page);
     const y0 = (await getPlayer(page)).y;
 
@@ -66,7 +69,7 @@ test.describe("player movement (§6)", () => {
 
   test("sprint is faster than walk", async ({ page }) => {
     const speedAfterRun = async (sprint: boolean): Promise<number> => {
-      await teleport(page, "PLAYER", 24, 1.2, -4);
+      await teleport(page, "PLAYER", E.x, 1.2, -4);
       await waitGrounded(page);
       await playerInput(page, { sprint, moveDir: { x: 0, z: 1 } });
       await page.waitForTimeout(350);
