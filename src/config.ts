@@ -200,7 +200,8 @@ export const AI = {
   dodgeDuration: 0.5,
   dodgeJumpChance: 0.5,
   stuckTime: 0.5,
-  wanderRadius: 14,
+  wanderRadius: 14, // wander points on the hub stay within this radius
+  wanderEdgeMargin: 2, // wander points stay this far inside a platform rim
   strafeFlipMin: 1,
   strafeFlipMax: 2,
   idleMaxSeconds: 2,

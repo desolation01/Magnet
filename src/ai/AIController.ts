@@ -41,6 +41,7 @@ export class AIController {
   private wanderX = 0;
   private wanderZ = 0;
   private hasWanderPoint = false;
+  private readonly wanderPoint = { x: 0, z: 0 };
   private stuckTimer = 0;
   /** Committed to firing repulse at the next good opportunity (rolled per decision). */
   private wantsRepulse = false;
@@ -295,6 +296,7 @@ export class AIController {
     const here = arena.edgeInfo(self.position.x, self.position.z).platform;
     if (!here || here.kind === "bridge") return false;
     if (target && arena.edgeInfo(target.position.x, target.position.z).platform !== here) return false;
+    if (this.behavior === Behavior.WANDER && this.hasWanderPoint && arena.edgeInfo(this.wanderX, this.wanderZ).platform !== here) return false;
     arena.outwardDir(self.position.x, self.position.z, this.outward);
     self.body.getLinearVelocityToRef(tmpVel);
     const m = self.input.moveDir;
@@ -352,11 +354,11 @@ export class AIController {
   private wander(world: AIWorld): void {
     const self = this.self;
     if (!this.hasWanderPoint || Math.hypot(this.wanderX - self.position.x, this.wanderZ - self.position.z) < 1.5) {
+      // Anywhere on the arena (by platform area), so fights also happen near the smaller platforms' edges.
       for (let i = 0; i < AI.wanderPickTries; i++) {
-        const a = world.rng.range(0, Math.PI * 2);
-        const r = Math.sqrt(world.rng.next()) * AI.wanderRadius;
-        this.wanderX = Math.cos(a) * r;
-        this.wanderZ = Math.sin(a) * r;
+        world.arena.randomPoint(world.rng, AI.wanderEdgeMargin, AI.wanderRadius, this.wanderPoint);
+        this.wanderX = this.wanderPoint.x;
+        this.wanderZ = this.wanderPoint.z;
         if (!world.arena.isObstructed(this.wanderX, this.wanderZ, AI.wanderObstacleMargin)) break;
       }
       this.hasWanderPoint = true;

@@ -8,6 +8,7 @@ import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { CreateBox } from "@babylonjs/core/Meshes/Builders/boxBuilder";
 import { CreateCylinder } from "@babylonjs/core/Meshes/Builders/cylinderBuilder";
 import { AI, ARENA } from "../config";
+import type { Rng } from "../util/rng";
 import {
   BOXES, CYLINDERS, PLATFORMS, RAMPS, WALKWAYS,
   type PlatformDef, type PlatformKind, type SurfaceKind, type WalkwayDef,
@@ -342,6 +343,38 @@ export class Arena {
       }
     }
     return false;
+  }
+
+  /**
+   * Writes a random point on a random base platform (chosen by area), at least `margin` inside its rim.
+   * Hub points stay within `hubRadius` of the center.
+   */
+  randomPoint(rng: Rng, margin: number, hubRadius: number, out: Pt): Platform {
+    let total = 0;
+    for (const p of this.nodes) total += Arena.area(p);
+    let pick = rng.next() * total;
+    let p = this.nodes[this.nodes.length - 1];
+    for (const n of this.nodes) {
+      pick -= Arena.area(n);
+      if (pick <= 0) {
+        p = n;
+        break;
+      }
+    }
+    if (p.shape === "circle") {
+      const r = Math.sqrt(rng.next()) * (p.kind === "hub" ? Math.min(hubRadius, p.radius - margin) : p.radius - margin);
+      const a = rng.range(0, Math.PI * 2);
+      out.x = p.cx + Math.cos(a) * r;
+      out.z = p.cz + Math.sin(a) * r;
+    } else {
+      out.x = p.cx + rng.range(-1, 1) * (p.hx - margin);
+      out.z = p.cz + rng.range(-1, 1) * (p.hz - margin);
+    }
+    return p;
+  }
+
+  private static area(p: Platform): number {
+    return p.shape === "circle" ? Math.PI * p.radius * p.radius : 4 * p.hx * p.hz;
   }
 
   /** Registers an extra obstacle footprint (bounce pads, island props). */
