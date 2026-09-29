@@ -204,7 +204,7 @@ export class BouncePads {
       for (const o of objects) {
         if (!o.alive || o.heldBy) continue;
         const p = o.position;
-        if (!this.onPad(pad, p.x, p.z, p.y - o.radius) || !this.take(pad, o)) continue;
+        if (!this.onPad(pad, p.x, p.z, p.y - o.halfHeight) || !this.take(pad, o)) continue;
         o.body.setLinearVelocity(pad.launch);
         this.feedback(pad, p);
       }

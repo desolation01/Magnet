@@ -87,6 +87,8 @@ export class MagneticObject {
   readonly mass: number;
   readonly heavy: boolean;
   readonly radius: number;
+  /** Half the resting height (bottom = center − halfHeight). */
+  readonly halfHeight: number;
   /** Character currently holding this object with attract, if any. */
   heldBy: Character | null = null;
   /** Character that last launched this object with repulse; its magnet ignores the object until launchLockUntil. */
@@ -104,6 +106,7 @@ export class MagneticObject {
     this.mass = spec.mass;
     this.heavy = spec.heavy;
     this.radius = spec.radius;
+    this.halfHeight = spec.halfHeight;
   }
 
   get body(): PhysicsBody {

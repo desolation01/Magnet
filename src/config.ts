@@ -151,7 +151,7 @@ export const ARENA = {
   catwalkWidth: 2.5, // cardinal ↔ diagonal island catwalks
   bridgeThickness: 1,
   bridgeTopOffset: 0.01, // bridge tops sit this far below y = 0 so they never z-fight with the platforms they overlap
-  walkwayOverlap: 0.5, // walkway meshes reach this far onto the platforms they connect
+  walkwayOverlap: 0.8, // walkway meshes reach this far onto the platforms they connect (covers the rim corner where a catwalk leaves a square platform at an angle)
   raisedBlockSize: 6,
   raisedBlockHeight: 2,
   rampWidth: 3,
@@ -413,6 +413,8 @@ export const AI = {
   walkwayEntryInset: 2, // routing waypoints sit this far inside a platform, in line with the walkway
   walkwayAlignLateral: 0.8, // closer than this to a walkway's centerline counts as lined up with it
   walkwayCorridorExtend: 2.5, // edge distance is raised near walkway ends (this far along the axis)
+  walkwayCorridorShrink: 0.3, // ...within the walkway width minus this
+  walkwayEntryWindow: 1.5, // lined up and within this of the entry point (or past it) counts as entering the walkway
   rngSeed: 1337,
 };
 

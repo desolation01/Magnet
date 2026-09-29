@@ -148,7 +148,7 @@ export function drawTexture(scene: Scene, kind: TexKind, rng: Rng): DynamicTextu
         const seg = Math.floor(along);
         if (c.joints > 0 && lineDist(along * (SIZE / segs) + 0.5, SIZE / segs) < c.seamPx / 2) return c.seam + 0.08;
         // Grain: noise stretched along the plank.
-        const g = grain(x * 4, y * 0.25);
+        const g = grain(x * 4, y); // whole periods on both axes, so the texture tiles without a seam
         return shade[p * segs + seg] + (g - 0.5) * c.grain * 2;
       }, keep);
     }

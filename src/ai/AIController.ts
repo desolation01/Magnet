@@ -156,9 +156,12 @@ export class AIController {
       m.set(here.axisX * sign * AI.idleStrafe, 0, here.axisZ * sign * AI.idleStrafe);
       return;
     }
+    // Circle around the target, or around the center of the platform we stand on.
     const t = this.target;
-    let tx = t && t.alive ? t.position.x - self.position.x : -self.position.x;
-    let tz = t && t.alive ? t.position.z - self.position.z : -self.position.z;
+    const cx = here ? here.cx : 0;
+    const cz = here ? here.cz : 0;
+    let tx = t && t.alive ? t.position.x - self.position.x : cx - self.position.x;
+    let tz = t && t.alive ? t.position.z - self.position.z : cz - self.position.z;
     if (tx * tx + tz * tz < 0.01) {
       tx = 1;
       tz = 0;
@@ -187,6 +190,17 @@ export class AIController {
       const pull = -world.arena.lateralOffset(p, x, z) * AI.bridgeCenterGain;
       m.x += px * (pull - side);
       m.z += pz * (pull - side);
+      // Steering that was all sideways (e.g. strafing around a target along the walkway) would leave the
+      // AI standing still here: step off along the axis toward its target (or the nearer end) instead (§16).
+      const along = m.x * p.axisX + m.z * p.axisZ;
+      if (Math.abs(along) < AI.minMoveInput) {
+        const o = this.behavior === Behavior.USE_OBJECT && this.object && this.object.alive ? this.object : null;
+        const t = o ?? (this.target && this.target.alive ? this.target : null);
+        const toTarget = t ? (t.position.x - x) * p.axisX + (t.position.z - z) * p.axisZ : 0;
+        const sign = toTarget !== 0 ? Math.sign(toTarget) : (world.arena.nearerEnd(p, x, z) === p.ends![1] ? 1 : -1);
+        m.x += p.axisX * (sign * AI.idleStrafe - along);
+        m.z += p.axisZ * (sign * AI.idleStrafe - along);
+      }
     } else if (info.distance < AI.edgeGuardDistance) {
       world.arena.outwardDir(x, z, this.outward);
       const out = m.x * this.outward.x + m.z * this.outward.z;
@@ -397,10 +411,18 @@ export class AIController {
       flankX = t.position.x - this.outward.x * AI.flankDistance;
       flankZ = t.position.z - this.outward.z * AI.flankDistance;
       // Never walk to a flank point that is over the void or right at an edge: approach directly instead.
-      if (world.arena.edgeInfo(flankX, flankZ).distance < AI.dangerEdge) flank = false;
+      if (world.arena.edgeInfo(flankX, flankZ).distance < AI.dangerEdge
+        || world.arena.isObstructed(flankX, flankZ, AI.wanderObstacleMargin)) flank = false;
     }
+    // No standoffs on a walkway (holding a 6–10 unit band along a narrow axis makes the AI jitter in place):
+    // cross to the entry point on the target's side first. nextWaypoint returns that point.
+    const here = world.arena.edgeInfo(self.position.x, self.position.z).platform;
+    const onWalkway = here !== null && here.kind === "bridge"
+      && world.arena.edgeInfo(t.position.x, t.position.z).platform !== here;
 
-    if (flank) {
+    if (onWalkway && !flank) {
+      steerTo(self, world, t.position.x, t.position.z);
+    } else if (flank) {
       const toFlank = steerTo(self, world, flankX, flankZ);
       input.sprint = toFlank > 4;
       if (toFlank < 2.5) addStrafe(self, dx, dz, this.strafeDir, 0.3);

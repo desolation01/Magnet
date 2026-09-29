@@ -32,6 +32,11 @@ export interface Platform {
   /** Walkways: half length (along the axis, between the two platform rims) and half width. */
   halfLen: number;
   halfWidth: number;
+  /**
+   * Walkways: how far the rim curves or slants back from the centerline's exit point across the walkway
+   * width. The footprint is extended by this much at both ends so there is no gap between it and the rim.
+   */
+  endSag: number;
   /** Walkways: the two platforms it connects. */
   ends: [Platform, Platform] | null;
   /** Routing graph index (platforms only, −1 for walkways). */
@@ -152,7 +157,7 @@ export class Arena {
     this.addStatic(mesh, def.shape === "circle" ? PhysicsShapeType.CYLINDER : PhysicsShapeType.BOX, def.color, def.kind);
     const p: Platform = {
       name: def.name, kind: def.kind, shape: def.shape, cx: def.cx, cz: def.cz, radius: def.radius, hx: def.hx, hz: def.hz,
-      axisX: 0, axisZ: 0, halfLen: 0, halfWidth: 0, ends: null, node: this.nodes.length,
+      axisX: 0, axisZ: 0, halfLen: 0, halfWidth: 0, endSag: 0, ends: null, node: this.nodes.length,
     };
     this.nodes.push(p);
     this.platforms.push(p);
@@ -164,6 +169,16 @@ export class Arena {
     const tx = Math.abs(dx) > 1e-6 ? p.hx / Math.abs(dx) : Infinity;
     const tz = Math.abs(dz) > 1e-6 ? p.hz / Math.abs(dz) : Infinity;
     return Math.min(tx, tz);
+  }
+
+  /** How far the rim of `p` recedes, across a walkway of half width `hw` leaving along (dx, dz). */
+  private static rimSag(p: Platform, dx: number, dz: number, hw: number): number {
+    if (p.shape === "circle") return p.radius - Math.sqrt(Math.max(0, p.radius * p.radius - hw * hw));
+    const ax = Math.abs(dx);
+    const az = Math.abs(dz);
+    // Exits through an x side (normal ±X) when that side is hit first, else through a z side.
+    const viaX = ax > 1e-6 && (az < 1e-6 || p.hx / ax <= p.hz / az);
+    return viaX ? (hw * az) / ax : (hw * ax) / Math.max(az, 1e-6);
   }
 
   /** A straight walkway between two platforms, along the line between their centers. */
@@ -190,6 +205,7 @@ export class Arena {
     const w: Platform = {
       name: def.name, kind: "bridge", shape: "rect", cx, cz, radius: 0, hx: 0, hz: 0,
       axisX: ax, axisZ: az, halfLen: (end - start) / 2, halfWidth: def.width / 2, ends: [a, b], node: -1,
+      endSag: Math.max(Arena.rimSag(a, ax, az, def.width / 2), Arena.rimSag(b, -ax, -az, def.width / 2)),
     };
     this.walkways.push(w);
     this.platforms.push(w);
@@ -296,7 +312,7 @@ export class Arena {
     const outX = from === w.ends![0] ? w.axisX : -w.axisX;
     const outZ = from === w.ends![0] ? w.axisZ : -w.axisZ;
     const along = (fx - entry.x) * outX + (fz - entry.z) * outZ;
-    if (lateral < AI.walkwayAlignLateral && along > -1.5) {
+    if (lateral < AI.walkwayAlignLateral && along > -AI.walkwayEntryWindow) {
       this.walkwayEntry(w, other, AI.walkwayEntryInset, out);
     } else {
       out.x = entry.x;
@@ -336,12 +352,12 @@ export class Arena {
     const rz = z - w.cz;
     const along = Math.abs(rx * w.axisX + rz * w.axisZ);
     const across = Math.abs(-rx * w.axisZ + rz * w.axisX);
-    return along <= w.halfLen + extend && across <= w.halfWidth - shrink;
+    return along <= w.halfLen + w.endSag + extend && across <= w.halfWidth - shrink;
   }
 
   /** True when (x, z) lies in line with a walkway, near or on it. */
   private inWalkwayCorridor(x: number, z: number): boolean {
-    for (const w of this.walkways) if (this.onWalkway(w, x, z, AI.walkwayCorridorExtend, 0.3)) return true;
+    for (const w of this.walkways) if (this.onWalkway(w, x, z, AI.walkwayCorridorExtend, AI.walkwayCorridorShrink)) return true;
     return false;
   }
 
