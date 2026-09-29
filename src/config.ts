@@ -168,6 +168,37 @@ export const ARENA = {
   emissiveFactor: 0.1, // arena materials glow with this fraction of their color (keeps them from looking washed out)
 };
 
+export const BOUNCE = {
+  // Bounce pads on the hub rim (arena expansion spec §3): one per diagonal at this radius → (±12, ±12),
+  // each launching whatever steps on it to the center of the diagonal island behind it.
+  ringRadius: 17,
+  padRadius: 1.2,
+  padHeight: 0.2,
+  tessellation: 24,
+  topRadius: 1.0, // glowing top disc (visual only)
+  obstacleClearance: 1.5, // AI wander/flank points keep this far outside the pad radius
+  launchVy: 14, // vertical launch speed; the horizontal speed is solved per pad so the arc lands mid-island
+  triggerHeight: 0.6, // feet (or object bottom) within this height above the pad top trigger a launch
+  triggerBelow: 0.15, // ...or this far below it (a capsule or prop riding up onto the pad rim)
+  cooldown: 0.6, // seconds, per body and per pad
+  controlFraction: 0.3, // characters' movement control (air accel and steering speed) during the flight
+  groundLock: 0.15, // grounded is ignored this long after a launch so the pad top does not end the flight at once
+  flightMargin: 0.3, // the flight state lasts at most the flight time plus this (ends earlier on landing)
+  arrowLength: 1.3,
+  arrowHeadWidth: 0.9,
+  arrowShaftWidth: 0.34,
+  arrowHeadLength: 0.55,
+  idleGlow: 0.75, // top emissive multiplier at rest
+  pulseGlow: 2.2, // top emissive multiplier at the start of a launch pulse
+  pulseDuration: 0.35,
+  burstCount: 24,
+  burstPower: 5,
+  baseColor: "#3a3f6e",
+  topColor: "#34e8c4",
+  arrowColor: "#ffffff",
+  burstColor: "#8affe6",
+};
+
 export const SPAWN = {
   // 7 hand-picked hub points (≥2 u from obstacles, ≥4 u apart) + 4 cardinal platform centers.
   // Index 0 is always the player's spawn.

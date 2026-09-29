@@ -13,6 +13,7 @@ import type { HavokPhysicsWithBindings } from "@babylonjs/havok";
 import type { AIWorld } from "../ai/AITargeting";
 import { Arena } from "../arena/Arena";
 import { ArenaObjects } from "../arena/ArenaObjects";
+import { BouncePads } from "../arena/BouncePads";
 import { AudioManager } from "../audio/AudioManager";
 import type { Character } from "../character/Character";
 import { Effects, type PlayerEffectsView } from "../combat/Effects";
@@ -63,6 +64,7 @@ export class Game {
   private readonly camera: ThirdPersonCamera;
   private readonly controller: PlayerController;
   private readonly effects: Effects;
+  readonly bouncePads: BouncePads;
   private readonly magnets: MagnetSystem;
   private readonly knockback: KnockbackSystem;
   private readonly match: MatchManager;
@@ -116,6 +118,7 @@ export class Game {
     this.controller.onLockChange = (locked) => this.hud.setLockHint(!locked && this.sm.is("COUNTDOWN", "PLAYING"));
 
     this.effects = new Effects(scene);
+    this.bouncePads = new BouncePads(scene, this.arena, this.effects, this.audio);
     this.magnets = new MagnetSystem(this.effects, {
       onRepulse: (user, pos) => {
         this.audio.repulse(user.isPlayer ? null : pos);
@@ -163,6 +166,7 @@ export class Game {
     this.publishDebug();
     window.__MM_DUMP__ = () => ({
       time: +this.matchTime.toFixed(1),
+      bounce: { launches: this.bouncePads.launches, pads: this.bouncePads.pads },
       eliminations: this.eliminationLog,
       ai: this.match.controllers.map((ctrl) => ({
         name: ctrl.self.name,
@@ -236,6 +240,7 @@ export class Game {
     this.nameplates.clear();
     this.notifications.clear();
     this.effects.clear();
+    this.bouncePads.reset();
     this.match.clear();
     this.screens.hideEnd();
     this.screens.hideCountdown();
@@ -327,6 +332,7 @@ export class Game {
     if (state === "PLAYING") for (const ai of this.match.controllers) ai.update(dt, this.world);
 
     for (const c of this.match.characters) c.update(dt);
+    this.bouncePads.update(dt, this.match.characters, this.objects.objects);
     if (player && player.alive) {
       if (player.jumpedThisFrame) this.audio.jump();
       if (player.landedThisFrame) this.audio.land();

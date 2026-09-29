@@ -9,7 +9,7 @@ import { ARENA, COLORS } from "../config";
 export type PlatformKind = "hub" | "cardinal" | "island" | "bridge";
 
 /** Surface tag stored on every static arena mesh (metadata.surface), used for textures. */
-export type SurfaceKind = "hub" | "cardinal" | "island" | "walkway" | "block" | "ramp" | "pillar" | "wall";
+export type SurfaceKind = "hub" | "cardinal" | "island" | "walkway" | "block" | "ramp" | "pillar" | "wall" | "pad";
 
 export interface PlatformDef {
   name: string;
