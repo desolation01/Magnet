@@ -209,6 +209,139 @@ export const SPAWN = {
   height: 1.5,
 };
 
+/** Island themes (static pieces placed in ArenaLayout.ts) and visual-only dressing (ArenaDecor.ts). */
+export const DECOR = {
+  themes: {
+    crystal: { radius: 1.1, height: 3, capHeight: 1.4, color: "#6fd6f5" }, // NE: hex-prism collider + pointed cap
+    scrap: { height: 1.5, color: "#9c6b4e" }, // SE: two scrap-pile box colliders
+    trunk: { radius: 0.4, height: 2.5, color: "#7a5230" }, // SW: tree trunks
+    tower: { size: 3, distance: 4.3, stepRise: 1, stepDepth: 1.2, color: "#c9b596" }, // NW: tower center this far out from the island center
+  },
+  underside: {
+    seed: 11,
+    depthMin: 6, // smallest platform
+    depthMax: 10, // hub
+    depthJitter: 0.6,
+    gap: 0.02, // rock tops sit this far below the platform bottom
+    inset: 0.97, // rock top rim as a fraction of the platform footprint
+    tipRadius: 0.14, // bottom point as a fraction of the top radius
+    taperPower: 1.6,
+    rings: 4, // vertical subdivisions
+    circleSides: 14,
+    hubSides: 22,
+    rectSides: 16, // multiple of 4, so the square's corners get a vertex
+    radialJitter: 0.13,
+    verticalJitter: 0.35,
+    tipWander: 1.2,
+    colors: ["#8b6a4c", "#7d7f86", "#6f553e", "#969a9f", "#80624a"],
+    bottomDarken: 0.45, // faces near the tip are darkened by up to this fraction
+  },
+  grass: {
+    seed: 21,
+    perIsland: 16,
+    perCardinal: 12,
+    blades: 4,
+    bladeRadius: 0.09,
+    bladeHeightMin: 0.28,
+    bladeHeightMax: 0.5,
+    spread: 0.16,
+    tilt: 0.35,
+    scaleMin: 0.8,
+    scaleMax: 1.3,
+    islandMinRadius: 1.5,
+    rimInset: 0.45, // tufts stay this far inside a platform rim
+    cardinalBand: 1.4, // cardinal tufts sit in this band along the rim
+    walkwayMargin: 1.3, // kept clear on each side of a walkway's line
+    obstacleMargin: 0.4,
+    color: "#4fb342",
+  },
+  crystals: {
+    seed: 31,
+    count: 8,
+    rimMin: 5.2,
+    rimMax: 6.1,
+    arcHalf: 1.9, // radians either side of the outward direction
+    scaleMin: 0.6,
+    scaleMax: 1.1,
+    shardRadius: 0.2,
+    shardHeight: 0.8,
+    tipHeight: 0.35,
+    color: "#9be8ff",
+    emissive: 0.35,
+  },
+  scrapBits: {
+    seed: 41,
+    pipes: 6,
+    bolts: 14,
+    onPile: 0.4, // fraction of the bits dropped on the pile tops
+    pipeRadius: 0.12,
+    pipeLength: 1.4,
+    boltRadius: 0.17,
+    boltHeight: 0.14,
+    scatterMin: 1.5,
+    scatterMax: 6,
+    plates: 5,
+    plateWidth: 1.1,
+    plateDepth: 0.8,
+    plateThickness: 0.08,
+    plateTilt: 0.35,
+    pipeColor: "#8f959e",
+    boltColor: "#b5b9bf",
+    plateColor: "#b0743f",
+  },
+  canopy: {
+    seed: 51,
+    radius: 1.35,
+    blobs: 3,
+    heightScale: 0.8,
+    lift: 0.75, // canopy center above the trunk top
+    scaleMin: 0.9,
+    scaleMax: 1.15,
+    color: "#3e9c47",
+  },
+  flag: {
+    poleHeight: 2.4,
+    poleRadius: 0.07,
+    width: 1.2,
+    height: 0.7,
+    inset: 0.6, // pole stands this far inside the tower's outer wall
+    waveSpeed: 2.2,
+    waveAmp: 0.3,
+    color: "#e8332f",
+    poleColor: "#e6e6e6",
+  },
+  floatingRocks: {
+    seed: 61,
+    count: 12,
+    radiusMin: 55,
+    radiusMax: 95,
+    yMin: -20,
+    yMax: 10,
+    scaleMin: 1.6,
+    scaleMax: 4.5,
+    bobAmp: 0.8,
+    bobSpeed: 0.45,
+    spinSpeed: 0.05,
+    rockColor: "#8a7560",
+    grassColor: "#5cbf4a",
+  },
+  clouds: {
+    seed: 7,
+    count: 18,
+    parts: 3,
+    radiusMin: 60,
+    radiusMax: 110,
+    yMin: -38,
+    yMax: -20,
+    partSizeMin: 7,
+    partSizeMax: 13,
+    partSpacing: 4.5,
+    flatten: 0.45,
+    color: "#ffffff",
+    emissive: "#bfccd9",
+  },
+};
+
 export const COUNTDOWN = {
   stepSeconds: 1,
   goSeconds: 0.5,

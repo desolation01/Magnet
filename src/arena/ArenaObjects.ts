@@ -72,14 +72,14 @@ export const OBJECT_SPAWNS: { kind: MagneticKind; x: number; z: number }[] = [
   { kind: "crate", x: 29.5, z: -3 },
   { kind: "barrel", x: -37, z: -3.5 },
   { kind: "ball", x: -29.5, z: 3 },
-  // SE scrapyard (center (24, 24))
-  { kind: "crate", x: 26.83, z: 26.83 },
-  { kind: "crate", x: 27.98, z: 24.35 },
-  { kind: "barrel", x: 24.35, z: 27.98 },
-  // NE, SW, NW islands (NW further out to clear the lookout tower)
-  { kind: "springBall", x: 26.1, z: -26.1 },
-  { kind: "ball", x: -26.1, z: 26.1 },
-  { kind: "crate", x: -27.4, z: -27.4 },
+  // SE scrapyard (center (24, 24)): hub side, clear of the scrap piles on the outward half
+  { kind: "crate", x: 21.8, z: 22.4 },
+  { kind: "crate", x: 24.6, z: 21.2 },
+  { kind: "barrel", x: 21.2, z: 24.8 },
+  // NE, SW, NW islands: beside the theme pieces, off the pad landing point at the center
+  { kind: "springBall", x: 24, z: -27.5 },
+  { kind: "ball", x: -21.6, z: 25 },
+  { kind: "crate", x: -22, z: -22 },
 ];
 
 export class MagneticObject {

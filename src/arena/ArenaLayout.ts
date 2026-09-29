@@ -1,4 +1,4 @@
-import { ARENA, COLORS } from "../config";
+import { ARENA, COLORS, DECOR } from "../config";
 
 /**
  * The arena as data (docs/superpowers/specs/2026-09-29-arena-expansion-design.md §1–2).
@@ -9,7 +9,9 @@ import { ARENA, COLORS } from "../config";
 export type PlatformKind = "hub" | "cardinal" | "island" | "bridge";
 
 /** Surface tag stored on every static arena mesh (metadata.surface), used for textures. */
-export type SurfaceKind = "hub" | "cardinal" | "island" | "walkway" | "block" | "ramp" | "pillar" | "wall" | "pad";
+export type SurfaceKind =
+  | "hub" | "cardinal" | "island" | "walkway" | "block" | "ramp" | "pillar" | "wall"
+  | "crystal" | "scrap" | "trunk" | "tower" | "pad";
 
 export interface PlatformDef {
   name: string;
@@ -42,6 +44,8 @@ export interface BoxDef {
   d: number;
   /** Bottom of the box (default 0 = standing on the platform). */
   y?: number;
+  /** Yaw in radians (default 0). Rotated boxes register their axis-aligned bounds as the obstacle footprint. */
+  rotY?: number;
   color: string;
   surface: SurfaceKind;
   /** Characters can stand on it (grounded check). */
@@ -100,6 +104,65 @@ export const WALKWAYS: WalkwayDef[] = [
   catwalk("W", "NW"), catwalk("W", "SW"),
 ];
 
+// ---------------------------------------------------------------- island themes (spec §2)
+
+/**
+ * A point on a diagonal island, `out` units from its center away from the hub and `side` units across.
+ * Catwalks enter each island from its two neighbouring cardinals, so the hub-facing half carries the
+ * walking routes between them and every theme piece sits on the outward half, off the entry lines.
+ * `yaw` turns a box's local +Z toward the outward direction (local +X then runs across it).
+ */
+function islandPoint(island: string, out: number, side: number): { x: number; z: number; yaw: number } {
+  const p = PLATFORMS.find((d) => d.name === island)!;
+  const len = Math.hypot(p.cx, p.cz);
+  const ux = p.cx / len;
+  const uz = p.cz / len;
+  return { x: p.cx + ux * out - uz * side, z: p.cz + uz * out + ux * side, yaw: Math.atan2(ux, uz) };
+}
+
+const T = DECOR.themes;
+
+const themeBox = (
+  name: string, at: { x: number; z: number; yaw: number }, w: number, h: number, d: number,
+  color: string, surface: SurfaceKind, yawOffset = 0,
+): BoxDef => ({ name, x: at.x, z: at.z, w, h, d, rotY: at.yaw + yawOffset, color, surface, ground: true, obstacle: true });
+
+// NW lookout tower: a 3×3×3 box turned to face the hub. Three 1-unit steps (tops at 1, 2 and 3) stand
+// side by side against its hub-facing wall, so the climb runs across the wall and the island center stays free.
+const tower = T.tower;
+const stepOut = tower.distance - tower.size / 2 - tower.stepDepth / 2;
+const stepWidth = tower.size / 3;
+const towerSteps: BoxDef[] = [0, 1, 2].map((k) => themeBox(
+  `tower-step-${k + 1}`, islandPoint("NW", stepOut, (1 - k) * stepWidth),
+  stepWidth, (k + 1) * tower.stepRise, tower.stepDepth, tower.color, "tower",
+));
+
+const ISLAND_BOXES: BoxDef[] = [
+  // SE scrapyard: two scrap piles on the outward half, turned a little so they do not read as crates.
+  themeBox("scrap-pile-1", islandPoint("SE", 3, 2.1), 2.2, T.scrap.height, 1.8, T.scrap.color, "scrap", 0.35),
+  themeBox("scrap-pile-2", islandPoint("SE", 2.9, -2.2), 1.8, T.scrap.height - 0.2, 2.2, T.scrap.color, "scrap", -0.5),
+  themeBox("lookout-tower", islandPoint("NW", tower.distance, 0), tower.size, tower.size, tower.size, tower.color, "tower"),
+  ...towerSteps,
+];
+
+const trunk = (name: string, at: { x: number; z: number }): CylinderDef => ({
+  name, x: at.x, z: at.z, radius: T.trunk.radius, h: T.trunk.height, tessellation: 8,
+  color: T.trunk.color, surface: "trunk", ground: false, obstacle: true,
+});
+
+const ISLAND_CYLINDERS: CylinderDef[] = [
+  // NE crystal garden: one large hexagonal crystal, off-center on the outward half (hex-prism collider).
+  {
+    name: "crystal", x: islandPoint("NE", 3.3, 0.6).x, z: islandPoint("NE", 3.3, 0.6).z,
+    radius: T.crystal.radius, h: T.crystal.height, tessellation: 6,
+    color: T.crystal.color, surface: "crystal", ground: true, obstacle: true,
+  },
+  // SW grove: three trees. The trunks collide; the canopies are ArenaDecor dressing.
+  trunk("tree-1", islandPoint("SW", 3.6, 0)),
+  trunk("tree-2", islandPoint("SW", 1.2, 3)),
+  trunk("tree-3", islandPoint("SW", 1.4, -3)),
+];
+
 const bs = ARENA.raisedBlockSize;
 const bh = ARENA.raisedBlockHeight;
 const wh = ARENA.wallHeight;
@@ -118,6 +181,7 @@ export const BOXES: BoxDef[] = [
   { name: "guard-rail-N2", x: -railX, z: -edge, w: ARENA.guardRailLength, h: wh, d: ARENA.wallThickness, color: COLORS.wall, surface: "wall", ground: false, obstacle: false },
   { name: "guard-rail-S1", x: railX, z: edge, w: ARENA.guardRailLength, h: wh, d: ARENA.wallThickness, color: COLORS.wall, surface: "wall", ground: false, obstacle: false },
   { name: "guard-rail-S2", x: -railX, z: edge, w: ARENA.guardRailLength, h: wh, d: ARENA.wallThickness, color: COLORS.wall, surface: "wall", ground: false, obstacle: false },
+  ...ISLAND_BOXES,
 ];
 
 const pillar = (name: string, x: number, z: number): CylinderDef => ({
@@ -130,6 +194,7 @@ export const CYLINDERS: CylinderDef[] = [
   pillar("pillar-2", -11, -7),
   pillar("pillar-3", 4, 14),
   pillar("pillar-4", -4, -14),
+  ...ISLAND_CYLINDERS,
 ];
 
 /** Ramps join the raised blocks: A on its west side, B on its east side. */

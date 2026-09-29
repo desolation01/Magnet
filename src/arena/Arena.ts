@@ -119,13 +119,23 @@ export class Arena {
     for (const b of BOXES) {
       const mesh = CreateBox(b.name, { width: b.w, height: b.h, depth: b.d }, s);
       mesh.position.set(b.x, (b.y ?? 0) + b.h / 2, b.z);
+      const cos = Math.abs(Math.cos(b.rotY ?? 0));
+      const sin = Math.abs(Math.sin(b.rotY ?? 0));
+      mesh.rotation.y = b.rotY ?? 0;
       this.addStatic(mesh, PhysicsShapeType.BOX, b.color, b.surface, b.ground);
-      if (b.obstacle) this.obstacles.push({ x: b.x, z: b.z, hx: b.w / 2, hz: b.d / 2, circle: false });
+      // Rotated boxes register their axis-aligned bounds.
+      const hx = (cos * b.w + sin * b.d) / 2;
+      const hz = (sin * b.w + cos * b.d) / 2;
+      if (b.obstacle) this.obstacles.push({ x: b.x, z: b.z, hx, hz, circle: false });
     }
     for (const c of CYLINDERS) {
       const mesh = CreateCylinder(c.name, { diameter: c.radius * 2, height: c.h, tessellation: c.tessellation }, s);
       mesh.position.set(c.x, c.h / 2, c.z);
-      this.addStatic(mesh, PhysicsShapeType.CYLINDER, c.color, c.surface, c.ground);
+      // Low-tessellation prisms (the hex crystal) are faceted and collide as their exact convex hull.
+      const prism = c.tessellation <= 6;
+      if (prism) mesh.convertToFlatShadedMesh();
+      const shape = prism ? PhysicsShapeType.CONVEX_HULL : PhysicsShapeType.CYLINDER;
+      this.addStatic(mesh, shape, c.color, c.surface, c.ground);
       if (c.obstacle) this.obstacles.push({ x: c.x, z: c.z, hx: c.radius, hz: c.radius, circle: true });
     }
     for (const r of RAMPS) this.addRamp(r.name, r.x, r.z, r.riseDir, r.color);
