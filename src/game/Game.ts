@@ -13,6 +13,7 @@ import type { HavokPhysicsWithBindings } from "@babylonjs/havok";
 import type { AIWorld } from "../ai/AITargeting";
 import { Arena } from "../arena/Arena";
 import { ArenaObjects } from "../arena/ArenaObjects";
+import { applyArenaTextures } from "../arena/ArenaTextures";
 import { AudioManager } from "../audio/AudioManager";
 import type { Character } from "../character/Character";
 import { Effects, type PlayerEffectsView } from "../combat/Effects";
@@ -105,6 +106,7 @@ export class Game {
     this.shadows.darkness = 0.35;
 
     this.arena = new Arena(scene, this.shadows);
+    applyArenaTextures(scene, this.arena);
     this.objects = new ArenaObjects(scene, this.shadows);
     this.objects.onImpact = (p, speed) => this.audio.impact(p, speed);
     this.objects.reset();

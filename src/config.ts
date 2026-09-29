@@ -297,6 +297,47 @@ export const DIFFICULTY: Record<Difficulty, DifficultySettings> = {
 
 export const DEFAULT_DIFFICULTY: Difficulty = "NORMAL";
 
+/**
+ * Procedural arena textures (arena expansion spec §5). Every texture is drawn once at runtime in grayscale
+ * and multiplies the material color. `period` is the world size of one texture repeat, `cells` how many
+ * tiles/plates/planks/bricks it holds per side. Brightness values are 0–1 multipliers.
+ */
+export const TEXTURES = {
+  size: 256, // canvas size (px) of every texture
+  seed: 7919, // RNG seed: textures look the same on every load
+  anisotropy: 8, // sharper tiles at grazing angles
+  keepBrightness: true, // scale each texture so its mean is 1: the average color matches the untextured look
+  tiles: { period: 4, cells: 2, face: [0.9, 1] as [number, number], grout: 0.74, groutPx: 3, noise: 0.05 }, // hub: stone tiles ≈ 2 u
+  plates: { period: 7, cells: 2, face: [0.93, 1] as [number, number], seam: 0.66, seamPx: 2, bevelPx: 5, bevel: 0.08, noise: 0.03 }, // cardinal tops ≈ 3.5 u
+  turf: { period: 6, blotch: [0.84, 1] as [number, number], blotchCells: 8, speckle: 0.14, speckleDensity: 0.12 }, // island tops
+  planks: { period: 2, cells: 4, face: [0.84, 1] as [number, number], seam: 0.55, seamPx: 3, grain: 0.06, joints: 0 }, // walkways: plank ≈ 0.5 u, running across; joints = end joints per repeat (0 = one board)
+  rock: { period: 4, bands: 5, band: [0.72, 1] as [number, number], wobble: 6, noise: 0.07 }, // platform sides
+  bricks: { period: 2, rows: 4, perRow: 2, face: [0.86, 1] as [number, number], mortar: 0.76, mortarPx: 4, noise: 0.04 }, // blocks, walls, pillars, tower
+  metal: { face: 0.96, border: 0.74, borderPx: 14, rivet: 0.7, rivetPx: 9, rivetInset: 26, rivetsPerSide: 3, brushed: 0.05 }, // magnetic props, 1 per face
+  /** Surface tag (mesh.metadata.surface) → texture. Tags not listed keep their own look. `side`: texture for side/bottom faces. */
+  surfaces: {
+    hub: { top: "tiles", side: "rock" },
+    cardinal: { top: "plates", side: "rock" },
+    island: { top: "turf", side: "rock" },
+    walkway: { top: "planks" },
+    ramp: { top: "planks" },
+    block: { top: "bricks" },
+    wall: { top: "bricks" },
+    pillar: { top: "bricks" },
+    tower: { top: "bricks" },
+  } as Record<string, { top: "tiles" | "plates" | "turf" | "planks" | "rock" | "bricks"; side?: "tiles" | "plates" | "turf" | "planks" | "rock" | "bricks" }>,
+  /** Hazard stripe band around every base-platform rim, cut at walkway entrances. */
+  trim: {
+    width: 0.5,
+    lift: 0.02, // above the platform top (y = 0) so it never z-fights
+    stripePeriod: 1, // world length of one yellow + black stripe pair along the rim
+    colors: ["#ffcc1a", "#26262b"] as [string, string],
+    entranceMargin: 0.3, // gap beyond each walkway's half width
+    segment: 0.5, // max arc length of one ring segment on circular rims
+    textureSize: 64,
+  },
+};
+
 export const COLORS = {
   player: "#ffc928",
   playerOutline: "#ffffff",
