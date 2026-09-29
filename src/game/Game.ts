@@ -3,15 +3,13 @@ import { DirectionalLight } from "@babylonjs/core/Lights/directionalLight";
 import { Engine } from "@babylonjs/core/Engines/engine";
 import { HavokPlugin } from "@babylonjs/core/Physics/v2/Plugins/havokPlugin";
 import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight";
-import { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { Scene } from "@babylonjs/core/scene";
 import { ShadowGenerator } from "@babylonjs/core/Lights/Shadows/shadowGenerator";
-import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
-import { CreateSphere } from "@babylonjs/core/Meshes/Builders/sphereBuilder";
 import type { HavokPhysicsWithBindings } from "@babylonjs/havok";
 import type { AIWorld } from "../ai/AITargeting";
 import { Arena } from "../arena/Arena";
+import { ArenaDecor } from "../arena/ArenaDecor";
 import { ArenaObjects } from "../arena/ArenaObjects";
 import { AudioManager } from "../audio/AudioManager";
 import type { Character } from "../character/Character";
@@ -59,6 +57,7 @@ export class Game {
   private readonly rng = new Rng(AI.rngSeed);
   private readonly shadows: ShadowGenerator;
   private readonly arena: Arena;
+  private readonly decor: ArenaDecor;
   private readonly objects: ArenaObjects;
   private readonly camera: ThirdPersonCamera;
   private readonly controller: PlayerController;
@@ -108,7 +107,7 @@ export class Game {
     this.objects = new ArenaObjects(scene, this.shadows);
     this.objects.onImpact = (p, speed) => this.audio.impact(p, speed);
     this.objects.reset();
-    this.buildClouds();
+    this.decor = new ArenaDecor(scene, this.shadows);
 
     this.camera = new ThirdPersonCamera(scene);
     this.controller = new PlayerController(canvas, this.camera);
@@ -183,32 +182,6 @@ export class Game {
       scene, arena: this.arena, match: this.match, objects: this.objects, controller: this.controller,
       getState: () => this.sm.state, getDifficulty: () => this.difficulty,
     });
-  }
-
-  private buildClouds(): void {
-    const mat = new StandardMaterial("cloud", this.scene);
-    mat.diffuseColor = new Color3(1, 1, 1);
-    mat.emissiveColor = new Color3(0.75, 0.8, 0.85);
-    mat.specularColor = Color3.Black();
-    const parts: Mesh[] = [];
-    const rng = new Rng(7);
-    for (let i = 0; i < 14; i++) {
-      const a = (i / 14) * Math.PI * 2 + rng.range(-0.2, 0.2);
-      const r = rng.range(45, 80);
-      const y = rng.range(-35, -18);
-      for (let j = 0; j < 3; j++) {
-        const s = CreateSphere("cloud-part", { diameter: rng.range(6, 11), segments: 6 }, this.scene);
-        s.scaling.y = 0.45;
-        s.position.set(Math.cos(a) * r + j * 4 - 4, y + rng.range(-1, 1), Math.sin(a) * r + rng.range(-2, 2));
-        parts.push(s);
-      }
-    }
-    const clouds = Mesh.MergeMeshes(parts, true);
-    if (clouds) {
-      clouds.material = mat;
-      clouds.isPickable = false;
-      clouds.freezeWorldMatrix();
-    }
   }
 
   // ------------------------------------------------------------ state flow
@@ -303,6 +276,7 @@ export class Game {
   private update(): void {
     const dt = Math.min(this.engine.getDeltaTime() / 1000, WORLD.maxFrameDt);
     if (dt <= 0) return;
+    this.decor.update(dt);
     const state = this.sm.state;
     const player = this.match.player;
 
