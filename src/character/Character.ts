@@ -65,6 +65,12 @@ export class Character {
   attracting = false;
 
   knockbackTimer = 0;
+  /** Bounce-pad flight (not a hit): seconds left, movement control, launch velocity and grounded lock. */
+  private flightTimer = 0;
+  private flightControl = 1;
+  private flightVx = 0;
+  private flightVz = 0;
+  private flightGroundLock = 0;
   /** Set by the magnet system every frame this character is being pulled. */
   pulled = false;
   /** Character whose magnet is holding this one. */
@@ -131,6 +137,7 @@ export class Character {
   get controlFactor(): number {
     if (!this.controlEnabled || this.heldBy) return 0;
     if (this.knockbackTimer > 0 || this.pulled) return MOVE.knockbackControl;
+    if (this.flightTimer > 0) return this.flightControl;
     return 1;
   }
 
@@ -163,6 +170,23 @@ export class Character {
     if (attacker) this.lastHitBy = attacker;
   }
 
+  /**
+   * Bounce-pad launch: sets the velocity and lowers movement control for the flight. Not a hit:
+   * no stability loss, no knockback state, hit credit (lastHitBy) untouched. The flight ends on
+   * landing, on a knockback, or when a magnet grabs the character.
+   */
+  launch(v: Vector3, flightTime: number, control: number, groundLock: number): void {
+    if (!this.alive) return;
+    this.body.setLinearVelocity(v);
+    this.knockbackTimer = 0;
+    this.flightTimer = flightTime;
+    this.flightControl = control;
+    this.flightVx = v.x;
+    this.flightVz = v.z;
+    this.flightGroundLock = groundLock;
+    this.grounded = false;
+  }
+
   private checkGrounded(): boolean {
     const r = this.ray;
     r.origin.copyFrom(this.mesh.position);
@@ -181,9 +205,16 @@ export class Character {
     if (this.repulseCooldown > 0) this.repulseCooldown = Math.max(0, this.repulseCooldown - dt);
     if (this.repulseAnimTimer > 0) this.repulseAnimTimer = Math.max(0, this.repulseAnimTimer - dt);
     this.stability = Math.min(STABILITY.max, this.stability + STABILITY.regenPerSec * dt);
+    if (this.flightTimer > 0) {
+      this.flightTimer = this.knockbackTimer > 0 || this.pulled || this.heldBy ? 0 : Math.max(0, this.flightTimer - dt);
+      this.flightGroundLock = Math.max(0, this.flightGroundLock - dt);
+    }
 
     this.wasGrounded = this.grounded;
-    this.grounded = this.knockbackTimer > MOVE.knockbackDuration - 0.1 ? false : this.checkGrounded();
+    this.grounded = this.knockbackTimer > MOVE.knockbackDuration - 0.1 || (this.flightTimer > 0 && this.flightGroundLock > 0)
+      ? false
+      : this.checkGrounded();
+    if (this.grounded) this.flightTimer = 0; // landed
     this.landedThisFrame = this.grounded && !this.wasGrounded;
     if (this.grounded) this.lastGroundPos.copyFrom(this.mesh.position);
     this.jumpedThisFrame = false;
@@ -197,7 +228,11 @@ export class Character {
       const speed = input.sprint ? MOVE.sprintSpeed : MOVE.walkSpeed;
       const accel = MOVE.groundAccel * (this.grounded ? 1 : MOVE.airAccelFactor) * control;
       const moving = input.moveDir.lengthSquared() > 0.0001;
-      if (moving || this.grounded) {
+      if (this.flightTimer > 0) {
+        // Pad flight: steer relative to the launch velocity, so a held key nudges the landing
+        // point instead of braking the arc down to walking speed.
+        moveTowardsXZ(this.velocity, this.flightVx + input.moveDir.x * speed * control, this.flightVz + input.moveDir.z * speed * control, accel * dt);
+      } else if (moving || this.grounded) {
         // In the air without input, keep momentum so knockbacks carry the character.
         moveTowardsXZ(this.velocity, input.moveDir.x * speed, input.moveDir.z * speed, accel * dt);
       }

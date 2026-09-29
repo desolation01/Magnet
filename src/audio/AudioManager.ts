@@ -148,6 +148,16 @@ export class AudioManager {
     this.noiseBurst(0.08, 0.3 * a, 3000, "bandpass", 3);
   }
 
+  /** Bounce pad "boing": a springy sine sweep up with a quick decay and a bright overtone. */
+  bounce(p: Vector3 | null): void {
+    if (!this.ready()) return;
+    const a = this.attenuation(p);
+    if (a <= 0.01) return;
+    this.tone("sine", 160, 620, 0.32, 0.5 * a);
+    this.tone("sine", 240, 900, 0.2, 0.18 * a, 0.03);
+    this.tone("triangle", 520, 1300, 0.1, 0.08 * a);
+  }
+
   playerHit(): void {
     if (!this.ready()) return;
     this.tone("square", 300, 120, 0.15, 0.3);
