@@ -33,6 +33,27 @@ export const CHARACTER = {
   playerOutlineWidth: 0.06,
 };
 
+export const RENDER = {
+  // Retina/5K screens (devicePixelRatio 2) would otherwise render 4× the pixels of a 1× screen.
+  // 1.5 measured 57 → 111 FPS at 2560×1440 CSS on an M4 and still looks sharp (AGENTS.md §32).
+  maxPixelRatio: 1.5,
+};
+
+export const NAMEPLATE = {
+  // On-screen size in CSS pixels, kept constant at any distance (AGENTS.md §28).
+  heightPx: 24,
+  aiWidthPx: 64,
+  playerWidthPx: 86,
+  // Texture pixels per CSS pixel: sharp up to devicePixelRatio 3 when magnified.
+  textureScale: 3,
+  fontSizePx: 14,
+  cornerRadiusPx: 8,
+  borderPx: 2,
+  textOutlinePx: 3,
+  alpha: 0.92,
+  renderingGroup: 1, // drawn after the scene with a cleared depth buffer, so never hidden behind geometry
+};
+
 export const CAMERA = {
   distance: 9,
   height: 4.5,
@@ -50,7 +71,7 @@ export const CAMERA = {
 };
 
 export const ATTRACT = {
-  range: 15,
+  range: 10.5,
   coneDeg: 60,
   accel: 40,
   holdDistance: 2.5,
@@ -59,8 +80,8 @@ export const ATTRACT = {
   springStiffness: 60,
   springDamping: 10,
   maxHeldCharacters: 1,
-  characterPullTime: 0.5, // max continuous pull + hold of one character by the same attacker
-  regrabLockout: 1, // after that, the attacker's magnet ignores that character for this long
+  characterPullTime: 1, // max continuous pull + hold of one character by the same attacker
+  regrabLockout: 3, // after that, the attacker's magnet ignores that character for this long
   objectRegrabLockout: 0.75, // after launching a held object, the thrower's magnet ignores it for this long
   pulledControl: 0.3, // movement control of a character being pulled
 };
@@ -77,12 +98,13 @@ export const REPULSE = {
   coneDeg: 60,
   pointBlankRadius: 2.5,
   horizontalSpeed: 18,
+  characterFactor: 0.55, // direct-repulse horizontal knockback on characters (objects get the full push)
   upwardSpeed: 5,
   falloff: 0.5,
   launchSpeed: 25,
   launchLift: 0.12,
   heavyFactor: 0.5,
-  cooldown: 2,
+  cooldown: 4,
   shakeDuration: 0.15,
   shakeAmplitude: 0.15,
 };
@@ -93,7 +115,7 @@ export const STABILITY = {
   objectHit: 15,
   objectHitSpeed: 8,
   objectHitCooldown: 0.5,
-  objectHitTransfer: 0.6, // fraction of the projectile's horizontal velocity given to the victim
+  objectHitTransfer: 0.7, // fraction of the projectile's horizontal velocity given to the victim
   objectHitLift: 3,
   regenPerSec: 1,
   /** Knockback multiplier = 1 + extraKnockback × (100 − stability) / 100. */
@@ -196,7 +218,7 @@ export const AI = {
   bridgeCenterGain: 0.8,
   wanderObstacleMargin: 1, // wander points are re-picked if within this of a raised block or pillar
   wanderPickTries: 6, // on a bridge, AI steering is pulled back toward the bridge centerline
-  lowStability: 40, // below this, cautious AIs retreat to recover
+  lowStability: 30, // below this, cautious AIs retreat to recover
   retreatRadius: 5, // RETREAT on the central platform moves radially inward to this radius
   rngSeed: 1337,
 };

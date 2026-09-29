@@ -229,6 +229,8 @@ export class MagnetSystem {
       const d = this.repulseDistance(c, t.position);
       if (d < 0) continue;
       this.pushVector(c, t.position, d, sin, cos);
+      this.dv.x *= REPULSE.characterFactor;
+      this.dv.z *= REPULSE.characterFactor;
       t.applyKnockback(this.dv, c, STABILITY.repulseHit);
       this.releaseAll(t, characters, objects, time);
     }

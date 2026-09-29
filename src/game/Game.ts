@@ -363,6 +363,7 @@ export class Game {
       this.camera.follow(this.lastFeet, dt);
       this.audio.setListener(this.lastFeet);
     }
+    this.nameplates.update(this.camera.camera);
     let view: PlayerEffectsView | null = null;
     if (player && this.sm.is("COUNTDOWN", "PLAYING")) {
       view = this.effectsView;

@@ -78,59 +78,76 @@ test.describe("magnet: attract (§8, §25)", () => {
     const d0 = dist2D(a0, player);
 
     await playerInput(page, { attract: true });
-    const samples = await sampleFrames(page, { character: "AI-01" }, 1_000);
+    // The capture must happen inside the 1 s pull window (ATTRACT.characterPullTime).
+    const [samples] = await Promise.all([
+      sampleFrames(page, { character: "AI-01" }, 1_000),
+      expect.poll(async () => (await getCharacter(page, "AI-01"))!.heldBy, { timeout: 1_000, intervals: [50] }).toBe("PLAYER"),
+    ]);
     const d1 = dist2D(samples[samples.length - 1], player);
     console.log(`AI distance ${d0.toFixed(2)} → ${d1.toFixed(2)}, max per-frame step ${maxStep(samples).toFixed(2)}`);
     expect(d1).toBeLessThan(d0 - 1.5);
     expect(maxStep(samples)).toBeLessThan(1.5);
-    await expect.poll(async () => (await getCharacter(page, "AI-01"))!.heldBy, { timeout: 3_000 }).toBe("PLAYER");
     await playerInput(page, { attract: false });
     await expect.poll(async () => (await getCharacter(page, "AI-01"))!.heldBy).toBeNull();
     expectNoErrors(errors);
   });
 
-  test("a character can only be pulled for 0.5 s in a row, then is ignored for 1 s", async ({ page }) => {
+  test("a character can only be pulled for 1 s in a row, then is ignored for 3 s", async ({ page }) => {
     await teleport(page, "AI-01", 21.5, 1.2, 0);
     await waitGrounded(page, "AI-01");
-    await playerInput(page, { attract: true });
-    // Per frame: is AI-01 being dragged or held by the player's magnet?
-    const samples = await page.evaluate(
-      () =>
-        new Promise<{ t: number; on: boolean }[]>((resolve) => {
-          const out: { t: number; on: boolean }[] = [];
-          const start = performance.now();
-          const tick = (): void => {
-            const s = window.__MM_TEST__!.getCharacter("AI-01");
-            out.push({ t: performance.now() - start, on: !!s && (s.pulled || s.heldBy === "PLAYER") });
-            if (performance.now() - start < 2_500) requestAnimationFrame(tick);
-            else resolve(out);
-          };
-          requestAnimationFrame(tick);
-        }),
-    );
-    await playerInput(page, { attract: false });
-
+    // Per frame, for `ms`: is AI-01 being dragged or held by the player's magnet?
+    const sample = (ms: number) =>
+      page.evaluate(
+        (dur) =>
+          new Promise<{ t: number; on: boolean }[]>((resolve) => {
+            const out: { t: number; on: boolean }[] = [];
+            const start = performance.now();
+            const tick = (): void => {
+              const s = window.__MM_TEST__!.getCharacter("AI-01");
+              out.push({ t: performance.now() - start, on: !!s && (s.pulled || s.heldBy === "PLAYER") });
+              if (performance.now() - start < dur) requestAnimationFrame(tick);
+              else resolve(out);
+            };
+            requestAnimationFrame(tick);
+          }),
+        ms,
+      );
     // Contiguous runs of contact / no contact, in ms.
-    const runs: { on: boolean; ms: number }[] = [];
-    for (let i = 1; i < samples.length; i++) {
-      const on = samples[i].on;
-      const ms = samples[i].t - samples[i - 1].t;
-      if (runs.length && runs[runs.length - 1].on === on) runs[runs.length - 1].ms += ms;
-      else runs.push({ on, ms });
-    }
+    const toRuns = (samples: { t: number; on: boolean }[]) => {
+      const runs: { on: boolean; ms: number }[] = [];
+      for (let i = 1; i < samples.length; i++) {
+        const on = samples[i].on;
+        const ms = samples[i].t - samples[i - 1].t;
+        if (runs.length && runs[runs.length - 1].on === on) runs[runs.length - 1].ms += ms;
+        else runs.push({ on, ms });
+      }
+      return runs;
+    };
+
+    // Attract held for 3.8 s (magnet power lasts 4 s): one ~1 s pull, then nothing.
+    await playerInput(page, { attract: true });
+    const runs = toRuns(await sample(3_800));
+    await playerInput(page, { attract: false });
     console.log(`pull runs: ${runs.map((r) => `${r.on ? "ON" : "off"} ${Math.round(r.ms)}`).join(", ")}`);
-    const on = runs.filter((r) => r.on);
-    expect(on.length, "the pull starts, stops, and starts again while attract stays held").toBeGreaterThanOrEqual(2);
-    for (const r of on) expect(r.ms).toBeLessThan(650);
-    const gap = runs.findIndex((r) => r.on) + 1;
-    expect(runs[gap].on).toBe(false);
-    expect(runs[gap].ms).toBeGreaterThan(850);
+    const first = runs.findIndex((r) => r.on);
+    expect(first).toBeGreaterThanOrEqual(0);
+    expect(runs[first].ms).toBeGreaterThan(850);
+    expect(runs[first].ms).toBeLessThan(1_150);
+    expect(runs.slice(first + 1).every((r) => !r.on), "no second pull during the 3 s lockout").toBe(true);
+    expect(runs[first + 1].ms).toBeGreaterThan(2_500);
+
+    // After the lockout (and some power regen) the same magnet can pull it again.
+    await page.waitForTimeout(1_500);
+    await playerInput(page, { attract: true });
+    const again = toRuns(await sample(500));
+    await playerInput(page, { attract: false });
+    expect(again.some((r) => r.on), "pull works again after the lockout").toBe(true);
     expectNoErrors(errors);
   });
 
-  test("attract does not reach targets beyond ~15 units or outside the cone", async ({ page }) => {
-    // 17 units west (on the central platform) and 6 units behind-left (outside the cone).
-    await teleportObject(page, CRATE, 10.5, 0.6, 0);
+  test("attract does not reach targets beyond ~10.5 units or outside the cone", async ({ page }) => {
+    // 12 units west (on the E bridge) and 6 units behind-left (outside the cone).
+    await teleportObject(page, CRATE, 15.5, 0.6, 0);
     await teleport(page, "AI-01", 24, 1.2, 4);
     await page.waitForTimeout(500);
     const c0 = await getObject(page, CRATE);
@@ -196,13 +213,13 @@ test.describe("magnet: repulse (§9, §26)", () => {
 
     await playerInput(page, { repulse: true });
     await expect.poll(async () => (await getPlayer(page)).repulseCooldown, { timeout: 2_000 }).toBeGreaterThan(1);
-    await expect(page.locator("#repulse-status")).toHaveText(/^[0-2]\.\ds$/);
+    await expect(page.locator("#repulse-status")).toHaveText(/^[0-4]\.\ds$/);
     await expect(page.locator("#hud-repulse")).toHaveClass(/cooling/);
     const a1 = (await getCharacter(page, "AI-01"))!;
     expect(a1.stability, "repulse hit costs stability").toBeLessThan(100);
 
     await expect.poll(async () => dist2D((await getCharacter(page, "AI-01"))!, player), { timeout: 3_000 })
-      .toBeGreaterThan(dist2D(a0, player) + 4);
+      .toBeGreaterThan(dist2D(a0, player) + 2.5);
     await expect.poll(async () => dist2D(await getObject(page, CRATE), player), { timeout: 3_000 })
       .toBeGreaterThan(dist2D(c0, player) + 3);
 
@@ -212,7 +229,7 @@ test.describe("magnet: repulse (§9, §26)", () => {
     await page.waitForTimeout(200);
     expect((await getPlayer(page)).repulseCooldown).toBeLessThan(before);
 
-    await expect(page.locator("#repulse-status")).toHaveText("READY", { timeout: 4_000 });
+    await expect(page.locator("#repulse-status")).toHaveText("READY", { timeout: 6_000 });
     await expect(page.locator("#hud-repulse")).toHaveClass(/ready/);
     const seen = await page.evaluate(() => (window as unknown as { __repulseSeen: { text: string; t: number }[] }).__repulseSeen);
     const texts = seen.map((s) => s.text);
@@ -221,12 +238,12 @@ test.describe("magnet: repulse (§9, §26)", () => {
     expect(first).toBeGreaterThanOrEqual(0);
     const numbers = texts.slice(first, texts.lastIndexOf("READY")).map((t) => parseFloat(t));
     expect(numbers.length).toBeGreaterThan(5);
-    expect(numbers[0]).toBeGreaterThanOrEqual(1.8);
+    expect(numbers[0]).toBeGreaterThanOrEqual(3.8);
     for (let i = 1; i < numbers.length; i++) expect(numbers[i]).toBeLessThanOrEqual(numbers[i - 1]);
     const duration = (seen[seen.length - 1].t - seen[first].t) / 1000;
     console.log(`cooldown wall-clock duration ${duration.toFixed(2)} s`);
-    expect(duration).toBeGreaterThan(1.6);
-    expect(duration).toBeLessThan(3.5);
+    expect(duration).toBeGreaterThan(3.6);
+    expect(duration).toBeLessThan(5.5);
     expectNoErrors(errors);
   });
 

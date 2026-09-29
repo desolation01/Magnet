@@ -222,7 +222,7 @@ export class AIController {
 
     if (zone === EdgeZone.DANGER && !rng.chance(diff.mistakeChance)) {
       d.behavior = Behavior.RETREAT;
-    } else if (zone !== EdgeZone.SAFE && self.stability < AI.lowStability && rng.chance(pers.edgeCaution * 0.5)) {
+    } else if (self.stability < AI.lowStability && rng.chance(pers.edgeCaution * 0.5)) {
       d.behavior = Behavior.RETREAT;
     } else if (zone === EdgeZone.WARNING && this.movingOutward(world, target) && rng.chance(pers.edgeCaution) && this.behavior !== Behavior.USE_OBJECT) {
       d.behavior = Behavior.RETREAT;
