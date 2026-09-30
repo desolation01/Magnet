@@ -41,6 +41,9 @@ export class AdaptiveResolution {
   private goodTime = 0;
   private sinceUpscale = Infinity;
   private blockTime = 0;
+  private downBlockTime = 0;
+  /** FPS of the window before the last downscale, until the next window checks the gain. */
+  private fpsBeforeDownscale = 0;
   private shadowsOff = false;
   /** Hardware scaling factor on top of the pixel-ratio cap (1 = full resolution). */
   scale = 1;
@@ -57,6 +60,7 @@ export class AdaptiveResolution {
     this.windowTime += dt;
     this.sinceUpscale += dt;
     this.blockTime = Math.max(0, this.blockTime - dt);
+    this.downBlockTime = Math.max(0, this.downBlockTime - dt);
     if (this.windowTime < QUALITY.windowSeconds) return;
 
     const window = this.samples.subarray(0, this.count).sort();
@@ -65,10 +69,23 @@ export class AdaptiveResolution {
     this.count = 0;
     this.windowTime = 0;
 
+    if (this.fpsBeforeDownscale > 0) {
+      const gained = fps >= this.fpsBeforeDownscale * QUALITY.downscaleMinGain;
+      this.fpsBeforeDownscale = 0;
+      if (!gained) {
+        // Not GPU-bound: the lower resolution did not help, so take it back.
+        this.apply(Math.max(1, this.scale - QUALITY.scaleStep));
+        this.downBlockTime = QUALITY.downscaleBlockSeconds;
+        return;
+      }
+    }
+
     if (fps < QUALITY.downscaleBelowFps) {
       this.goodTime = 0;
       if (this.sinceUpscale < QUALITY.upscaleProbeSeconds) this.blockTime = QUALITY.upscaleBlockSeconds;
+      if (this.downBlockTime > 0) return;
       if (this.scale < QUALITY.maxScale) {
+        this.fpsBeforeDownscale = fps;
         this.apply(Math.min(QUALITY.maxScale, this.scale + QUALITY.scaleStep));
       } else if (fps < QUALITY.shadowsOffBelowFps && !this.shadowsOff) {
         this.shadowsOff = true;

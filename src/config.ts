@@ -82,6 +82,10 @@ export const QUALITY = {
   // An upscale that drops the FPS again within this many seconds blocks upscaling for upscaleBlockSeconds.
   upscaleProbeSeconds: 3,
   upscaleBlockSeconds: 30,
+  // A downscale must raise the FPS by this factor in the next window, or it is undone and downscaling
+  // pauses for downscaleBlockSeconds: when the CPU is the bottleneck, fewer pixels only blur the image.
+  downscaleMinGain: 1.1,
+  downscaleBlockSeconds: 30,
   shadowsOffBelowFps: 30, // last resort at maxScale: turn shadows off
   ignoreFrameMs: 250, // longer frames (tab switch, debugger) are not samples
 };
