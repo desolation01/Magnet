@@ -156,7 +156,12 @@ export class CharacterVisual {
     // A shared part: an instance for the AI, a visible copy (sharing the geometry) for the player.
     const part = (name: string, src: Mesh, p: TransformNode, x: number, y: number, z: number): AbstractMesh => {
       const m: AbstractMesh = isPlayer ? src.clone(name, null, true) : src.createInstance(name);
-      if (isPlayer) m.isVisible = true;
+      if (isPlayer) {
+        // clone() deep-copies the source's flags: undo the hidden-source ones, or the clone's bounds
+        // stay frozen at the origin and frustum culling drops the part (looks invisible).
+        m.isVisible = true;
+        m.doNotSyncBoundingInfo = false;
+      }
       m.parent = p;
       m.position.set(x, y, z);
       this.meshes.push(m);
@@ -324,6 +329,19 @@ export class CharacterVisual {
     } else {
       this.magnetMat.emissiveColor.copyFrom(this.magnetBaseEmissive);
     }
+  }
+
+  /**
+   * Test/debug: per part, how far its culling bounding sphere is from where the part is actually drawn.
+   * Anything above ~1 unit means frustum culling tests the wrong place and the part vanishes.
+   */
+  boundsReport(): { name: string; offset: number; noSync: boolean }[] {
+    return this.meshes.map((m) => {
+      m.computeWorldMatrix(true);
+      const drawn = m.getAbsolutePosition();
+      const c = m.getBoundingInfo().boundingSphere.centerWorld;
+      return { name: m.name, offset: Math.hypot(c.x - drawn.x, c.y - drawn.y, c.z - drawn.z), noSync: m.doNotSyncBoundingInfo };
+    });
   }
 
   dispose(): void {

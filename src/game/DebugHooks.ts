@@ -164,6 +164,8 @@ export interface TestApi {
   isObstructed(x: number, z: number, margin: number): boolean;
   /** Follows Arena.nextWaypoint from (fx, fz) toward (tx, tz) for at most `maxHops` waypoints. */
   route(fx: number, fz: number, tx: number, tz: number, maxHops: number): RouteResult;
+  /** Culling-bounds offset per visual part of a character (see CharacterVisual.boundsReport). */
+  visualBounds(name: string): { name: string; offset: number; noSync: boolean }[];
   /** Frame-cost averages since the last call (resets the window). Profiling only. */
   perf(): PerfSample;
 }
@@ -319,6 +321,7 @@ export function installDebugHooks(ctx: DebugContext): void {
       return c ? snap(c) : null;
     },
     getCharacters: () => match.characters.map(snap),
+    visualBounds: (name) => find(name)?.visual.boundsReport() ?? [],
     getObjects: () =>
       objects.objects.map((o) => {
         const v = o.body.getLinearVelocity();

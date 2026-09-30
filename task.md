@@ -79,6 +79,7 @@ Single source of truth for who is doing what. **Read this before starting any wo
 | 50 | Stage 6: island dressing (undersides, tufts, floating rocks, clouds move) | spec §6 | Coder A | DONE | with row 46 |
 | 51 | Review of stages 1–6 | all | Reviewer | TODO | after 46–50 |
 | 52 | Stage 7: integrate, full suite, balance playtests, 5K perf, AGENTS.md sync | spec §8, §9, §11 | Finalizer | IN PROGRESS | main = f164be1 (all arena stages merged; ragdoll WIP re-applied uncommitted, every line verified). Full suite 41 pass / 1 skip. AGENTS.md §4, §5 (+5.4, 5.5), §15, §18, §20, §23, §33, §36 updated. Balance playtests + 5K perf running. |
+| 53 | Low-end device performance pass (Vercel deploy) | §32 | Orchestrator | DONE | measured first: draw calls ~377 → ~120–250 (instanced character parts, merged magnet, floor pieces no longer cast shadows); mid-match 130–450 ms stalls = burst particle shader recompiles → pooled bursts + shader warm-up (0 compiles during PLAYING over 50 s); startup quality tier + adaptive resolution (src/game/Quality.ts, QUALITY); vercel.json asset caching; playwright testIgnore `._*`. Full suite 41 pass / 1 skip |
 
 ## §45 MVP checklist (Finalizer fills with evidence)
 
