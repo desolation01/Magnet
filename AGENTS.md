@@ -866,7 +866,7 @@ Implemented optimizations: Babylon **deep imports** (e.g. `@babylonjs/core/Meshe
 **Low-end devices** (`src/game/Quality.ts`, values in `QUALITY`):
 
 - **Startup tier:** `low` when `navigator.deviceMemory` ≤ 4 GB or `hardwareConcurrency` ≤ 4, `high` otherwise; `?quality=low|high` overrides. Low: no MSAA, pixel ratio 1, 1024 shadow map (4 MB of GPU memory instead of 16 MB). A software WebGL renderer (SwiftShader, llvmpipe) also gets the low shadow map.
-- **Adaptive resolution** (every device): the median frame time of each 1 s window decides. Below 50 FPS the render scale steps down by 0.25 (never below half resolution per axis); after 5 s at ≥ 58 FPS it steps back up by 0.125, and an upscale that drops the FPS again within 3 s blocks upscaling for 30 s. Still below 30 FPS at half resolution: the shadow map is cleared once and never redrawn (no shader recompile).
+- **Adaptive resolution** (every device): the median frame time of each 1 s window decides. Below 50 FPS the render scale steps down by 0.25 (never below half resolution per axis); after 5 s at ≥ 58 FPS it steps back up by 0.125, and an upscale that drops the FPS again within 3 s blocks upscaling for 30 s. Still below 30 FPS at half resolution: shadow darkness goes to 1 (invisible) and the shadow map is never redrawn. This is a uniform change; `scene.shadowsEnabled = false` or an empty caster list would recompile every receiver's shader mid-match.
 
 ---
 

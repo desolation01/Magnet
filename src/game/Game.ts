@@ -100,14 +100,13 @@ export class Game {
     this.scene = scene;
     // A software rasterizer is the slowest "GPU" there is: use the low-tier shadow map on it too.
     this.quality = isSoftwareRenderer(engine) ? { ...quality, tier: "low", shadowMapSize: QUALITY.low.shadowMapSize } : quality;
-    // Shadows off without changing any shader (scene.shadowsEnabled = false would recompile every
-    // material mid-match): the shadow map is cleared once and never drawn again.
+    // Shadows off without changing any shader: scene.shadowsEnabled = false, or an empty caster list,
+    // removes the shadow code from every receiver's shader and recompiles them all mid-match.
+    // Full darkness is a uniform; the shadow map is then never redrawn.
     this.resolution = new AdaptiveResolution(engine, () => {
+      this.shadows.darkness = 1;
       const map = this.shadows.getShadowMap();
-      if (!map) return;
-      map.renderList = [];
-      map.refreshRate = RenderTargetTexture.REFRESHRATE_RENDER_ONCE;
-      map.resetRefreshCounter();
+      if (map) map.refreshRate = RenderTargetTexture.REFRESHRATE_RENDER_ONCE;
     });
     scene.clearColor = Color4.FromHexString(`${WORLD.skyTop}ff`);
     scene.ambientColor = new Color3(0.3, 0.3, 0.35);

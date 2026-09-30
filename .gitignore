@@ -26,6 +26,8 @@ npm-debug.log*
 
 # OS / editor
 .DS_Store
+# macOS AppleDouble metadata files (created on non-APFS drives like this ExFAT one)
+._*
 Thumbs.db
 .idea/
 .vscode/*

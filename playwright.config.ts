@@ -10,6 +10,8 @@ const glArgs = useSwiftShader
 
 export default defineConfig({
   testDir: "tests",
+  // macOS writes AppleDouble "._*" metadata files on non-APFS drives; they are not tests.
+  testIgnore: "**/._*",
   timeout: 90_000,
   expect: { timeout: 10_000 },
   // Physics runs in real time, so parallel browsers steal frames from each other. Keep it low.
