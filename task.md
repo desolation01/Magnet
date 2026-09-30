@@ -68,17 +68,17 @@ Single source of truth for who is doing what. **Read this before starting any wo
 | 40 | AI stand still > 2 s (§16): 2–5 cases per match, max 5.1 s. Cause A: USE_OBJECT within 5 u of its object does not move while the opening attract delay (1.5–3.5 s) runs. Cause B: low-stability RETREAT (stability < 40) in SAFE on the central platform steers to its own position once inside retreatRadius 5, so moveDir = 0; on EASY reactionDelay 500 ms > decisionInterval 400 ms resets the pending ATTACK. | §16, §23 | Coder | IN PROGRESS | Suggested fix: strafe/circle when a retreat or use-object steer target is reached |
 | 41 | Held character released after 0.5 s (`ATTRACT.characterPullTime` 0.5 = pull + hold), spec §8.1.4 / §45 says 1.5 s | §8.1 | User | DONE | User: keep 0.5 s; Coder documents it in AGENTS.md §8.1/§45 |
 | 42 | HARD match length 40.8 s (< 60 s target); NORMAL 62.9/100.3/71 s (avg 78) with extraKnockback 0.6 | Phase 9 | User | DONE | User: leave HARD as is |
-| 43 | Final re-verification after other-session changes: build, full suite (update tests that assume old values, e.g. 2 s cooldown), smoke | §1.1, §45 | Finalizer | BLOCKED: src changing under row 44 (arena expansion, 15:01–15:04) | waits until other sessions editing the project are idle |
+| 43 | Final re-verification after other-session changes: build, full suite (update tests that assume old values, e.g. 2 s cooldown), smoke | §1.1, §45 | Finalizer | MERGED into row 52 | 16:00 tree (32b4e66 + ragdoll edits): tsc 0, build OK (main 1,481 kB), smoke OK, npm test 41 pass / 1 skipped; run 2 + GPU playtests pending on a stable tree; results on the 16:00 tree (before the pads/textures merge): tsc 0, build OK (1,481 kB), smoke OK, npm test 41 pass / 1 skip. Rest (2nd run, playtests, row 40 check, §45 refresh) is done once by row 52 to avoid a duplicate integration pass |
 | 44 | ARENA EXPANSION stage 1: layout data, bigger geometry, generic edge/routing, AI changes, hub terrain, spawns | spec §1, §2 (hub), §7, §8 | Orchestrator | DONE | commit 4f5da36; build + smoke pass; fix: idle AI on walkways step off along the axis (was strafing off sideways) |
 | 45 | Arena tests: helpers/specs to new coords, DebugHooks arena/route, arena.spec, playtest.spec | spec §9 | Test writer | DONE | __MM_TEST__.arena()/edgeInfo()/isObstructed()/route(); helpers SITES/VOID_*/findObject/freeSpots/clearPlatformObjects; all specs on new coords, no hard-coded object indices; new arena.spec (6) + playtest.spec (PLAYTEST=1). 38 pass / 1 skipped on main d9bbbc4, 38/1 on arena-integ 9592a7e; balance → row 53 |
-| 53 | Balance on the 1.5× arena: 3 playtests (4f5da36, NORMAL, idle player, `?noend`) never finished in 240 s (2/4/5 left); first AI elim 9.7/30.7/17.7 s; 0 self-falls; max elim speed 11. Odd pattern: nearly every AI elim is behavior RETREAT at exactly 11.0 u/s (sprint) with last ground point deep in the hub (r 6–11), often 3 at once by one attacker (AI-04 17.7–17.9 s, AI-10 23.9–24.1 s): check retreat steering while airborne/knocked and clustering at retreatRadius. Repro: `PLAYTEST=1 npx playwright test tests/playtest.spec.ts` | Phase 9, spec §8 | Test writer | REQUEST → Orchestrator | for row 52 balance loop |
-| 46 | Stage 2: island themes (NE crystal, SE scrap, SW grove, NW tower + stairs) | spec §2 | Coder A | IN PROGRESS | worktree; also does row 50 |
+| 53 | Balance on the 1.5× arena: 3 playtests (4f5da36, NORMAL, idle player, `?noend`) never finished in 240 s (2/4/5 left); first AI elim 9.7/30.7/17.7 s; 0 self-falls; max elim speed 11. Odd pattern: nearly every AI elim is behavior RETREAT at exactly 11.0 u/s (sprint) with last ground point deep in the hub (r 6–11), often 3 at once by one attacker (AI-04 17.7–17.9 s, AI-10 23.9–24.1 s): check retreat steering while airborne/knocked and clustering at retreatRadius. Repro: `PLAYTEST=1 npx playwright test tests/playtest.spec.ts` | Phase 9, spec §8 | Test writer | DONE (analysis) | Orchestrator traced it: not a bug. RETREAT/11 u/s = DANGER air-steering over the void after the hit; deep-hub grounded point = knockback suppresses grounded; bursts = held character thrown at 25 u/s. Pacing is re-measured after the ragdoll commit (row 52). |
+| 46 | Stage 2: island themes (NE crystal, SE scrap, SW grove, NW tower + stairs) | spec §2 | Coder A | DONE | 8b4a07e, merged on branch arena-integ (9592a7e); island prop spawns moved clear of theme pieces |
 | 47 | Stage 3: bounce pads + boing sound | spec §3 | Coder B | DONE | branch commit 7444fdf; all 4 pads land within 0.2 of island center; merge WAITS for the ragdoll session to commit (touches Character.ts/Game.ts) |
 | 48 | Stage 4: anvil + spring ball, 24 object spawns | spec §4 | Coder C | DONE | f360849 merged into main (d9bbbc4) |
-| 49 | Stage 5: procedural textures + hazard edge trim | spec §5 | Coder D | IN PROGRESS | worktree from main d9bbbc4, port 4184 |
-| 50 | Stage 6: island dressing (undersides, tufts, floating rocks, clouds move) | spec §6 | Coder A | IN PROGRESS | with row 46, port 4181 |
+| 49 | Stage 5: procedural textures + hazard edge trim | spec §5 | Coder D | DONE | f3e55df, merged on arena-integ (7314030); no FPS regression, +18 draw calls |
+| 50 | Stage 6: island dressing (undersides, tufts, floating rocks, clouds move) | spec §6 | Coder A | DONE | with row 46 |
 | 51 | Review of stages 1–6 | all | Reviewer | TODO | after 46–50 |
-| 52 | Stage 7: integrate, full suite, balance playtests, 5K perf, AGENTS.md sync | spec §8, §9, §11 | Finalizer | TODO | after 51 |
+| 52 | Stage 7: integrate, full suite, balance playtests, 5K perf, AGENTS.md sync | spec §8, §9, §11 | Finalizer | IN PROGRESS | main = f164be1 (all arena stages merged; ragdoll WIP re-applied uncommitted, every line verified). Full suite 41 pass / 1 skip. AGENTS.md §4, §5 (+5.4, 5.5), §15, §18, §20, §23, §33, §36 updated. Balance playtests + 5K perf running. |
 
 ## §45 MVP checklist (Finalizer fills with evidence)
 
@@ -113,6 +113,7 @@ Single source of truth for who is doing what. **Read this before starting any wo
 
 ## Open questions for the user
 
+- 2026-09-29: branch `arena-integ` (7314030) = main + bounce pads + island themes/dressing + textures, built and browser-checked; merges into main after the ragdoll commit.
 - 2026-09-29: another session is implementing a "ragdoll" mechanic (uncommitted edits in Character, CharacterVisual, MagnetSystem, KnockbackSystem, AITargeting, AIController, Game, config). User: **wait for it to commit, then integrate the arena work on top**; arena balance playtests are re-run after that.
 
 _(none open)_
@@ -139,3 +140,5 @@ _(none open)_
 - 2026-09-29: Coder agent terminated (network error). Found config/AGENTS.md changed by other sessions (9 peers on this project); user said keep them. Row 43 added for re-verification.
 - 2026-09-29: Row 43 paused by Finalizer: another session (row 44, arena expansion stage 1) is editing src. Pre-change results: build OK, 32/32 then 31/32 (test timing flake in elimination.spec fixed by polling). Re-run after row 44 settles.
 - 15:35 mai-71: RAGDOLL.duration 2 → 3 s (user request). tsc OK; magnet.spec reads RAGDOLL.duration, so no test edits. Tests not run: port 4173 is in use by another session.
+
+- 16:20 mai-71: row 43 folded into row 52 (Stage 7 already runs full suite + balance playtests). Row 52 should also confirm row 40 (no AI still > 2 s) and refresh §45. AGENTS.md §24.1 synced: ragdoll 2 s → 3 s (RAGDOLL.duration = 3, user request).

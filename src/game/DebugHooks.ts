@@ -32,6 +32,8 @@ export interface CharacterSnapshot {
   heldBy: string | null;
   /** Being dragged by someone's attract this frame (not yet held). */
   pulled: boolean;
+  /** Seconds of ragdoll left (0 = not ragdolled). */
+  ragdoll: number;
 }
 
 export interface ObjectSnapshot {
@@ -143,6 +145,8 @@ export interface TestApi {
   teleportObject(index: number, x: number, y: number, z: number): boolean;
   /** Drops the character below the elimination plane (y = −10). */
   eliminate(name: string): boolean;
+  /** Puts the character into ragdoll, as if hit by a projectile (no knockback). */
+  ragdoll(name: string): boolean;
   eliminateAllAI(): number;
   /** Freezes every AI controller (AI keep physics but receive no input). */
   freezeAI(frozen: boolean): void;
@@ -220,7 +224,8 @@ export function installDebugHooks(ctx: DebugContext): void {
   const find = (name: string): Character | undefined => match.characters.find((c) => c.name === name);
 
   const snap = (c: Character): CharacterSnapshot => {
-    const v = c.body.getLinearVelocity();
+    // An eliminated character's body is disposed 1 s after elimination: report zero velocity then.
+    const v = c.alive ? c.body.getLinearVelocity() : { x: 0, y: 0, z: 0 };
     return {
       name: c.name, alive: c.alive, grounded: c.grounded, controlEnabled: c.controlEnabled,
       x: r2(c.position.x), y: r2(c.position.y), z: r2(c.position.z),
@@ -228,6 +233,7 @@ export function installDebugHooks(ctx: DebugContext): void {
       stability: r2(c.stability), power: r2(c.power), repulseCooldown: r2(c.repulseCooldown),
       attracting: c.attracting, aimYaw: r2(c.input.aimYaw), heldBy: c.heldBy?.name ?? null,
       pulled: c.pulled,
+      ragdoll: r2(c.ragdollTimer),
     };
   };
 
@@ -339,6 +345,12 @@ export function installDebugHooks(ctx: DebugContext): void {
       const o = objects.objects.find((obj) => obj.spawnIndex === index);
       if (!o || !o.alive) return false;
       teleportBody(o.mesh, o.body, x, y, z);
+      return true;
+    },
+    ragdoll: (name) => {
+      const c = find(name);
+      if (!c || !c.alive) return false;
+      c.startRagdoll();
       return true;
     },
     eliminate: (name) => {

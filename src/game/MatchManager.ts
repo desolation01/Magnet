@@ -78,6 +78,7 @@ export class MatchManager {
       const [x, z] = aiSpawns[i];
       const name = `AI-${String(i + 1).padStart(2, "0")}`;
       const c = makeChar(i + 1, name, false, COLORS.ai[i % COLORS.ai.length], x, z);
+      c.perks = diff.aiPerks;
       this.controllers.push(new AIController(c, PERSONALITIES[personalityName], diff, world));
     });
   }

@@ -18,6 +18,7 @@ export enum AnimState {
   MOVE,
   AIR,
   KNOCKBACK,
+  RAGDOLL,
   ELIMINATED,
 }
 
@@ -63,6 +64,8 @@ class Joint {
 /** Chunky primitive character with procedural animation (AGENTS.md §13–14). */
 export class CharacterVisual {
   readonly root: TransformNode;
+  /** Whole body (legs + torso) under the yaw root; tipped over during RAGDOLL. */
+  private readonly body: TransformNode;
   private readonly torsoPivot: TransformNode;
   private readonly armL: Joint;
   private readonly armR: Joint;
@@ -107,16 +110,18 @@ export class CharacterVisual {
       return m;
     };
 
+    this.body = node("body", this.root, 0, 0, 0);
+
     // Legs
-    const hipL = node("hipL", this.root, -0.2, 0.7, 0);
-    const hipR = node("hipR", this.root, 0.2, 0.7, 0);
+    const hipL = node("hipL", this.body, -0.2, 0.7, 0);
+    const hipR = node("hipR", this.body, 0.2, 0.7, 0);
     box("legL", hipL, 0.3, 0.7, 0.32, 0, -0.35, 0, mats.pants);
     box("legR", hipR, 0.3, 0.7, 0.32, 0, -0.35, 0, mats.pants);
     this.legL = new Joint(hipL);
     this.legR = new Joint(hipR);
 
     // Torso + head
-    this.torsoPivot = node("torso", this.root, 0, 0.7, 0);
+    this.torsoPivot = node("torso", this.body, 0, 0.7, 0);
     box("torsoMesh", this.torsoPivot, 0.85, 0.72, 0.48, 0, 0.36, 0, bodyMat);
     const head = CreateSphere("head", { diameter: 0.78, segments: 8 }, scene);
     head.parent = this.torsoPivot;
@@ -159,7 +164,9 @@ export class CharacterVisual {
     const time = this.time;
     let torsoLean = 0;
     let bob = 0;
-    let armLx = 0, armLz = -0.08, armRx = 0, armRz = 0.08, legLx = 0, legRx = 0;
+    let armLx = 0, armLz = -0.08, armRx = 0, armRz = 0.08, legLx = 0, legRx = 0, legLz = 0, legRz = 0;
+    // Body tip (RAGDOLL only): lying on its back, raised and shifted so it rests over the capsule.
+    let tip = 0, tipY = 0, tipZ = 0;
 
     switch (state) {
       case AnimState.IDLE:
@@ -198,10 +205,25 @@ export class CharacterVisual {
         legRx = -Math.sin(time * 20) * 0.6;
         break;
       }
+      case AnimState.RAGDOLL: {
+        const w = Math.sin(time * 7) * 0.12;
+        tip = -1.4;
+        tipY = 0.3;
+        tipZ = 0.85;
+        armLz = -1.3 - w;
+        armRz = 1.3 + w;
+        armLx = -0.3 + w;
+        armRx = -0.2 - w;
+        legLx = 0.15 + w * 0.5;
+        legRx = -0.1 - w * 0.5;
+        legLz = -0.25;
+        legRz = 0.25;
+        break;
+      }
     }
 
     // MAGNET upper-body overlay (not during KNOCKBACK / ELIMINATED)
-    const overlay = (attracting || repulsing) && state !== AnimState.KNOCKBACK && state !== AnimState.ELIMINATED;
+    const overlay = (attracting || repulsing) && state !== AnimState.KNOCKBACK && state !== AnimState.RAGDOLL && state !== AnimState.ELIMINATED;
     if (overlay) {
       armRx = -Math.PI / 2;
       armRz = 0;
@@ -218,8 +240,13 @@ export class CharacterVisual {
     this.torsoPivot.rotation.x += (torsoLean - this.torsoPivot.rotation.x) * t;
     this.armL.set(armLx, armLz, t);
     this.armR.set(armRx, armRz, t);
-    this.legL.set(legLx, 0, t);
-    this.legR.set(legRx, 0, t);
+    this.legL.set(legLx, legLz, t);
+    this.legR.set(legRx, legRz, t);
+    // Tipping over is a slower, heavier blend than the limbs.
+    const tb = smoothFactor(9, dt);
+    this.body.rotation.x += (tip - this.body.rotation.x) * tb;
+    this.body.position.y += (tipY - this.body.position.y) * tb;
+    this.body.position.z += (tipZ - this.body.position.z) * tb;
 
     if (state === AnimState.ELIMINATED) {
       this.spin += dt * 10;

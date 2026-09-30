@@ -13,6 +13,8 @@ import { expectNoErrors, openGame, startMatch, trackErrors } from "./helpers";
 
 const MATCHES = Number(process.env.PLAYTEST_MATCHES ?? 3);
 const MATCH_LIMIT_S = Number(process.env.PLAYTEST_LIMIT ?? 240);
+/** PLAYTEST_PLAYER=idle keeps the player standing still; the default wanders the hub like a moving target. */
+const PLAYER_MODE = process.env.PLAYTEST_PLAYER ?? "move";
 
 interface Elimination {
   name: string;
@@ -30,7 +32,8 @@ interface Elimination {
 interface Dump {
   time: number;
   eliminations: Elimination[];
-  ai: { name: string; personality: string; alive: boolean }[];
+  projectileHits?: number;
+  ai: { name: string; personality: string; alive: boolean; stats?: Record<string, number> }[];
 }
 
 interface MatchSummary {
@@ -53,7 +56,34 @@ test("balance playtest: NORMAL, idle player, noend", async ({ page }) => {
 
   for (let m = 1; m <= MATCHES; m++) {
     await openGame(page, "noend");
-    await startMatch(page, { difficulty: "NORMAL" });
+    await startMatch(page, { difficulty: process.env.PLAYTEST_DIFFICULTY ?? "NORMAL" });
+    if (PLAYER_MODE === "move") {
+      // A moving target: walk (sometimes sprint) between random points on the hub, re-picked every 2–4 s.
+      await page.evaluate(() => {
+        const t = window.__MM_TEST__!;
+        let wx = 0;
+        let wz = 0;
+        let next = 0;
+        let sprint = false;
+        setInterval(() => {
+          const p = t.getPlayer();
+          if (!p || !p.alive) return;
+          const now = performance.now();
+          if (now > next || Math.hypot(wx - p.x, wz - p.z) < 1.5) {
+            const a = Math.random() * Math.PI * 2;
+            const r = Math.sqrt(Math.random()) * 12;
+            wx = Math.cos(a) * r;
+            wz = Math.sin(a) * r;
+            next = now + 2000 + Math.random() * 2000;
+            sprint = Math.random() < 0.3;
+          }
+          const dx = wx - p.x;
+          const dz = wz - p.z;
+          const l = Math.hypot(dx, dz) || 1;
+          t.playerInput({ moveDir: { x: dx / l, z: dz / l }, sprint });
+        }, 100);
+      });
+    }
     let dump: Dump;
     let alive: number;
     for (;;) {
@@ -81,8 +111,11 @@ test("balance playtest: NORMAL, idle player, noend", async ({ page }) => {
     console.log("eliminations (time, name, by, speed, ground x/z, behavior):");
     for (const e of dump.eliminations) {
       console.log(`  ${e.time.toFixed(1).padStart(6)}s  ${e.name.padEnd(6)} by ${String(e.by).padEnd(6)} `
-        + `speed ${(e.speed ?? 0).toFixed(1).padStart(5)}  g(${e.gx ?? "?"}, ${e.gz ?? "?"})  ${e.behavior ?? ""}`);
+        + `speed ${(e.speed ?? 0).toFixed(1).padStart(5)}  g(${e.gx ?? "?"}, ${e.gz ?? "?"})  ${e.behavior ?? ""}  ${String(e.hit ?? "")}`);
     }
+    const totals: Record<string, number> = {};
+    for (const a of dump.ai) for (const [k, v] of Object.entries(a.stats ?? {})) totals[k] = (totals[k] ?? 0) + v;
+    console.log("AI kill-combo totals:", JSON.stringify(totals), "projectile hits:", dump.projectileHits ?? "?");
   }
 
   const avg = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : NaN);

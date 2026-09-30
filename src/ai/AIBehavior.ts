@@ -1,4 +1,5 @@
 import type { Character } from "../character/Character";
+import { AI } from "../config";
 import { yawOf } from "../util/math";
 import type { AIWorld } from "./AITargeting";
 
@@ -8,6 +9,8 @@ export enum Behavior {
   RETREAT = "RETREAT",
   DODGE = "DODGE",
   USE_OBJECT = "USE_OBJECT",
+  /** Pull a ragdolled opponent in, carry it to the nearest void and drop or throw it off. */
+  GRAB = "GRAB",
 }
 
 const wp = { x: 0, z: 0 };
@@ -66,6 +69,35 @@ export function addCentering(self: Character, world: AIWorld, amount: number): v
     m.x /= ml;
     m.z /= ml;
   }
+}
+
+/**
+ * Writes where a projectile fired from (sx, sz) at `speed` meets a target at (px, pz) moving at (vx, vz),
+ * looking at most AI.maxLeadTime ahead. Falls back to the target's current position when there is no solution.
+ */
+export function interceptPoint(sx: number, sz: number, px: number, pz: number, vx: number, vz: number, speed: number, out: { x: number; z: number }): void {
+  const rx = px - sx;
+  const rz = pz - sz;
+  // |r + v t| = speed t  →  (v·v − s²) t² + 2 (r·v) t + r·r = 0
+  const a = vx * vx + vz * vz - speed * speed;
+  const b = 2 * (rx * vx + rz * vz);
+  const c = rx * rx + rz * rz;
+  let t = -1;
+  if (Math.abs(a) < 1e-6) {
+    if (b < 0) t = -c / b;
+  } else {
+    const disc = b * b - 4 * a * c;
+    if (disc >= 0) {
+      const sq = Math.sqrt(disc);
+      const t1 = (-b - sq) / (2 * a);
+      const t2 = (-b + sq) / (2 * a);
+      t = Math.min(t1, t2) > 0 ? Math.min(t1, t2) : Math.max(t1, t2);
+    }
+  }
+  if (!(t > 0)) t = 0;
+  t = Math.min(t, AI.maxLeadTime);
+  out.x = px + vx * t;
+  out.z = pz + vz * t;
 }
 
 export function aimAt(self: Character, x: number, z: number, errorRad: number): void {

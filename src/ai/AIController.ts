@@ -3,8 +3,11 @@ import type { MagneticObject } from "../arena/ArenaObjects";
 import type { Character } from "../character/Character";
 import { AI, ATTRACT, POWER, REPULSE, type DifficultySettings, type Personality } from "../config";
 import { angleDelta, DEG, yawOf } from "../util/math";
-import { addCentering, addStrafe, aimAt, Behavior, steerTo } from "./AIBehavior";
-import { EdgeZone, edgeZone, findComboObject, perceiveOpponents, selectTarget, type AIWorld } from "./AITargeting";
+import { addCentering, addStrafe, aimAt, Behavior, interceptPoint, steerTo } from "./AIBehavior";
+import {
+  EdgeZone, edgeZone, findComboObject, findDropDirection, findGrabTarget, isLateGame, perceiveOpponents, selectTarget,
+  type AIWorld,
+} from "./AITargeting";
 
 interface Decision {
   behavior: Behavior;
@@ -22,6 +25,8 @@ export class AIController {
   behavior: Behavior = Behavior.WANDER;
   target: Character | null = null;
   zone: EdgeZone = EdgeZone.SAFE;
+  /** Kill-combo counters for playtests (window.__MM_DUMP__). */
+  readonly stats = { objectThrows: 0, grabStarts: 0, grabs: 0, drops: 0, charThrows: 0, finishers: 0 };
 
   private object: MagneticObject | null = null;
   private objectStart = 0;
@@ -42,6 +47,8 @@ export class AIController {
   private wanderZ = 0;
   private hasWanderPoint = false;
   private readonly wanderPoint = { x: 0, z: 0 };
+  /** At most AI.lateGameAliveAI AI left (refreshed every decision). */
+  private lateGame = false;
   private stuckTimer = 0;
   /** Committed to firing repulse at the next good opportunity (rolled per decision). */
   private wantsRepulse = false;
@@ -49,6 +56,20 @@ export class AIController {
   private repulseReadyAt: number;
   /** Match time before which this AI will not attract (opening delay). */
   private readonly attractReadyAt: number;
+  /** Match time before which this AI will not repulse at all (opening delay; launches skip the later rests). */
+  private readonly openingRepulseAt: number;
+  /** Holding a grabbed character this frame (GRAB): relaxes the edge guard so it can reach the void. */
+  private carrying = false;
+  private readonly dropDir = { x: 0, z: 1 };
+  private dropDist = -1;
+  private dropDirAt = 0;
+  private lastCarried: Character | null = null;
+  /** Cached nearest void from the current target (edge-line throws and finishers). */
+  private readonly voidDir = { x: 0, z: 1 };
+  private voidDist = -1;
+  private voidFor: Character | null = null;
+  private voidAt = 0;
+  private readonly aimPoint = { x: 0, z: 0 };
   /** Rolled each decision: ignore the per-frame edge guard until the next decision (§20 mistakes). */
   private edgeMistake = false;
   private readonly perceived: Character[] = [];
@@ -64,6 +85,7 @@ export class AIController {
     this.decisionTimer = world.rng.range(0, difficulty.decisionInterval);
     this.strafeTimer = world.rng.range(AI.strafeFlipMin, AI.strafeFlipMax);
     this.repulseReadyAt = world.rng.range(AI.openingRepulseMin, AI.openingRepulseMax);
+    this.openingRepulseAt = this.repulseReadyAt;
     this.attractReadyAt = world.rng.range(AI.openingAttractMin, AI.openingAttractMax);
   }
 
@@ -72,13 +94,22 @@ export class AIController {
     return this.self.repulseCooldown <= 0 && world.time >= this.repulseReadyAt;
   }
 
+  /**
+   * Launching something held (an object or a grabbed character) only waits for the cooldown and the opening
+   * delay, not the rest: the magnet power drains while holding, so a throw that waits for the rest is lost.
+   */
+  private canLaunch(world: AIWorld): boolean {
+    return this.self.repulseCooldown <= 0 && world.time >= this.openingRepulseAt;
+  }
+
   update(dt: number, world: AIWorld): void {
     const self = this.self;
     const input = self.input;
     input.moveDir.set(0, 0, 0);
     input.sprint = false;
     input.attract = false;
-    if (!self.alive || !self.controlEnabled) return;
+    this.carrying = false;
+    if (!self.alive || !self.controlEnabled || self.ragdolled) return;
     const prevAim = input.aimYaw;
 
     this.decisionTimer -= dt;
@@ -103,6 +134,7 @@ export class AIController {
       case Behavior.RETREAT: this.retreat(world); break;
       case Behavior.DODGE: this.dodge(dt); break;
       case Behavior.USE_OBJECT: this.useObject(world); break;
+      case Behavior.GRAB: this.grab(world); break;
     }
 
     this.keepMoving(world);
@@ -119,8 +151,16 @@ export class AIController {
         this.wantsRepulse = false;
         const rest = world.rng.range(AI.repulseRestMin, AI.repulseRestMax)
           * Math.max(0, AI.repulseRestAggressionBase - this.personality.aggression)
-          * this.difficulty.repulseRestMultiplier;
-        this.repulseReadyAt = world.time + REPULSE.cooldown + rest;
+          * this.difficulty.repulseRestMultiplier
+          * (this.lateGame ? AI.lateGameRestMultiplier : 1);
+        this.repulseReadyAt = world.time + REPULSE.cooldown * self.perks.cooldown + rest;
+        if (this.carrying) this.stats.charThrows++;
+        else if (this.behavior === Behavior.GRAB) this.stats.finishers++;
+        else if (this.isHoldingObject(world)) this.stats.objectThrows++;
+        if (this.behavior === Behavior.USE_OBJECT && this.object?.heldBy === self) {
+          this.endObjectCombo(world);
+          this.behavior = Behavior.ATTACK;
+        }
       }
     }
 
@@ -201,7 +241,7 @@ export class AIController {
         m.x += p.axisX * (sign * AI.idleStrafe - along);
         m.z += p.axisZ * (sign * AI.idleStrafe - along);
       }
-    } else if (info.distance < AI.edgeGuardDistance) {
+    } else if (info.distance < (this.carrying ? AI.carryEdgeGuardDistance : AI.edgeGuardDistance)) {
       world.arena.outwardDir(x, z, this.outward);
       const out = m.x * this.outward.x + m.z * this.outward.z;
       if (out > 0) {
@@ -240,27 +280,45 @@ export class AIController {
 
     this.aimError = rng.range(-1, 1) * diff.aimErrorDeg * DEG;
     this.edgeMistake = rng.chance(diff.mistakeChance);
-    if (!this.wantsRepulse) this.wantsRepulse = rng.chance(AI.repulseChanceBase + AI.repulseChanceAggression * pers.aggression);
+    this.lateGame = isLateGame(world);
+    const lateRepulse = this.lateGame ? AI.lateGameRepulseChanceBonus : 0;
+    if (!this.wantsRepulse) this.wantsRepulse = rng.chance(AI.repulseChanceBase + AI.repulseChanceAggression * pers.aggression + lateRepulse);
 
     // A dodge in progress always finishes.
     if (this.behavior === Behavior.DODGE && this.dodgeTimer > 0) return;
 
     const d: Decision = { behavior: Behavior.WANDER, target, object: null, flank: this.flank, useAttract: this.useAttract };
+    const carried = this.heldCharacter(world);
+    const holdingObject = this.isHoldingObject(world);
+    const grab = carried ?? findGrabTarget(self, this.perceived, world);
+    // A kill is on (holding something, or a ragdolled opponent to finish): no caution retreats (only DANGER).
+    const killOn = holdingObject || grab !== null;
 
-    if (zone === EdgeZone.DANGER && !rng.chance(diff.mistakeChance)) {
+    if (carried) {
+      // Someone is in the magnet: finish the kill (drop or throw it off) instead of retreating or dodging.
+      d.behavior = Behavior.GRAB;
+      d.target = carried;
+    } else if (zone === EdgeZone.DANGER && !rng.chance(diff.mistakeChance)) {
       d.behavior = Behavior.RETREAT;
-    } else if (self.stability < AI.lowStability && rng.chance(pers.edgeCaution * 0.5)) {
+    } else if (!this.lateGame && !killOn && self.stability < AI.lowStability && rng.chance(pers.edgeCaution * 0.5)) {
+      // (Late game: no low-stability retreats — everyone is worn down by then, and retreating to the hub
+      // center made the last AI stall there where no knockback reaches an edge.)
       d.behavior = Behavior.RETREAT;
-    } else if (zone === EdgeZone.WARNING && this.movingOutward(world, target) && rng.chance(pers.edgeCaution) && this.behavior !== Behavior.USE_OBJECT) {
+    } else if (!killOn && zone === EdgeZone.WARNING && this.movingOutward(world, target) && rng.chance(pers.edgeCaution)
+      && this.behavior !== Behavior.USE_OBJECT && this.behavior !== Behavior.GRAB) {
       d.behavior = Behavior.RETREAT;
-    } else if (this.findThreat() && rng.chance(diff.dodgeChance)) {
+    } else if (!holdingObject && this.findThreat() && rng.chance(diff.dodgeChance)) {
       d.behavior = Behavior.DODGE;
+    } else if (grab && !holdingObject && world.time >= this.attractReadyAt) {
+      // A ragdolled opponent is the best chance of a kill: grab it (§19, §24.1).
+      d.behavior = Behavior.GRAB;
+      d.target = grab;
     } else if (this.behavior === Behavior.USE_OBJECT && this.object?.alive && world.time - this.objectStart < AI.objectComboTimeout) {
       return; // keep working the combo
     } else if (target) {
       const canCombo = world.time >= this.objectCooldownUntil && world.time >= this.attractReadyAt;
       const obj = canCombo ? findComboObject(self, target, world) : null;
-      if (obj && rng.chance(pers.objectUse * diff.objectUseMultiplier)) {
+      if (obj && rng.chance(AI.objectComboChanceBase + pers.objectUse * diff.objectUseMultiplier)) {
         d.behavior = Behavior.USE_OBJECT;
         d.object = obj;
       } else {
@@ -269,7 +327,7 @@ export class AIController {
     }
 
     if (d.behavior === Behavior.ATTACK && (d.target !== this.target || this.behavior !== Behavior.ATTACK)) {
-      d.flank = rng.chance(pers.flankBias);
+      d.flank = rng.chance(Math.min(1, pers.flankBias + AI.flankBonus + (this.lateGame ? AI.lateGameFlankBonus : 0)));
       d.useAttract = rng.chance(AI.attractChanceBase + AI.attractChanceAggression * pers.aggression);
     }
 
@@ -288,6 +346,7 @@ export class AIController {
   private apply(d: Decision, world: AIWorld): void {
     this.pending = null;
     if (d.behavior === Behavior.DODGE && this.behavior !== Behavior.DODGE) this.startDodge(world);
+    if (d.behavior === Behavior.GRAB && (this.behavior !== Behavior.GRAB || d.target !== this.target)) this.stats.grabStarts++;
     if (d.behavior === Behavior.USE_OBJECT && d.object !== this.object) {
       this.object = d.object;
       this.objectStart = world.time;
@@ -441,17 +500,17 @@ export class AIController {
     if (this.zone === EdgeZone.WARNING) addCentering(self, world, this.personality.edgeCaution * 0.6);
 
     aimAt(self, t.position.x, t.position.z, this.aimError);
-    this.useMagnetOn(dist, world);
+    this.useMagnetOn(dist, t.ragdolled, world);
   }
 
-  /** Attract to pull the target in, repulse when close or when holding something. */
-  private useMagnetOn(dist: number, world: AIWorld): void {
+  /** Attract to pull a ragdolled target in, repulse when close or when holding something. */
+  private useMagnetOn(dist: number, targetRagdolled: boolean, world: AIWorld): void {
     const self = this.self;
     const input = self.input;
     const holding = this.isHoldingAnything(world);
     if (holding) {
       input.attract = true;
-      if (dist <= AI.repulseHeldRange && this.canRepulse(world)) input.repulse = true;
+      if (dist <= AI.repulseHeldRange && this.canLaunch(world)) input.repulse = true;
       return;
     }
     if (dist <= AI.repulseCloseRange && this.canRepulse(world) && this.wantsRepulse) {
@@ -459,13 +518,24 @@ export class AIController {
       return;
     }
     const canAttract = self.attracting ? self.power > 0 : self.power >= POWER.restartThreshold;
-    if (this.useAttract && canAttract && world.time >= this.attractReadyAt && dist <= ATTRACT.range && dist > 3) input.attract = true;
+    // Only a ragdolled character can be attracted (AGENTS.md §8.1).
+    if (targetRagdolled && this.useAttract && canAttract && world.time >= this.attractReadyAt && dist <= ATTRACT.range && dist > 3) {
+      input.attract = true;
+    }
   }
 
   private isHoldingAnything(world: AIWorld): boolean {
+    return this.isHoldingObject(world) || this.heldCharacter(world) !== null;
+  }
+
+  private isHoldingObject(world: AIWorld): boolean {
     for (const o of world.objects) if (o.heldBy === this.self) return true;
-    for (const c of world.characters) if (c.heldBy === this.self) return true;
     return false;
+  }
+
+  private heldCharacter(world: AIWorld): Character | null {
+    for (const c of world.characters) if (c.heldBy === this.self) return c;
+    return null;
   }
 
   private retreat(world: AIWorld): void {
@@ -529,24 +599,191 @@ export class AIController {
     }
     const input = self.input;
     if (o.heldBy === self) {
-      // Aim the held object at the target and launch it.
-      const dist = Math.hypot(t.position.x - self.position.x, t.position.z - self.position.z);
-      aimAt(self, t.position.x, t.position.z, this.aimError);
-      input.attract = true;
-      if (dist > AI.repulseHeldRange - 2) steerTo(self, world, t.position.x, t.position.z, 0.7);
-      if (dist <= AI.repulseHeldRange && this.canRepulse(world)) {
-        input.repulse = true;
-        this.endObjectCombo(world);
-        this.behavior = Behavior.ATTACK;
-      }
+      this.throwHeld(t, world);
       return;
     }
     const dist = Math.hypot(o.position.x - self.position.x, o.position.z - self.position.z);
-    if (dist > 5) steerTo(self, world, o.position.x, o.position.z);
-    else addStrafe(self, o.position.x - self.position.x, o.position.z - self.position.z, this.strafeDir, AI.idleStrafe);
+    if (dist > AI.objectApproachDist) {
+      steerTo(self, world, o.position.x, o.position.z);
+      input.sprint = dist > ATTRACT.range;
+    } else {
+      addStrafe(self, o.position.x - self.position.x, o.position.z - self.position.z, this.strafeDir, AI.idleStrafe);
+    }
     aimAt(self, o.position.x, o.position.z, this.aimError * 0.5);
-    const canAttract = self.attracting ? self.power > 0 : self.power >= POWER.restartThreshold;
-    if (dist < 12 && canAttract && world.time >= this.attractReadyAt) input.attract = true;
+    if (dist <= ATTRACT.range - 0.5 && this.canAttract(world)) input.attract = true;
+  }
+
+  /**
+   * Holding an object: get on the far side of the target from its nearest void when that void is close enough
+   * for the hit to drive it off (edge-line throw), close in, and launch at the target's intercept point.
+   * The combo ends once the repulse fires.
+   */
+  private throwHeld(t: Character, world: AIWorld): void {
+    const self = this.self;
+    const input = self.input;
+    input.attract = true;
+    const dist = Math.hypot(t.position.x - self.position.x, t.position.z - self.position.z);
+    const lowPower = self.power < AI.throwLowPower;
+
+    let lined = true;
+    let spotX = t.position.x;
+    let spotZ = t.position.z;
+    const voidDist = this.targetVoid(t, world);
+    if (!lowPower && voidDist >= 0 && voidDist <= AI.throwKillReach * t.stabilityMultiplier + AI.throwLineSlack) {
+      spotX = t.position.x - this.voidDir.x * AI.throwStandoff;
+      spotZ = t.position.z - this.voidDir.z * AI.throwStandoff;
+      if (this.isStandable(world, spotX, spotZ)) lined = this.linedUp(t, dist);
+      else {
+        spotX = t.position.x;
+        spotZ = t.position.z;
+      }
+    }
+
+    const inRange = dist <= AI.throwRange || (lowPower && dist <= AI.repulseHeldRange);
+    if (!lined) {
+      const toSpot = steerTo(self, world, spotX, spotZ);
+      input.sprint = toSpot > 3;
+    } else if (!inRange) {
+      steerTo(self, world, t.position.x, t.position.z);
+      input.sprint = dist > AI.repulseHeldRange;
+    }
+    this.aimIntercept(t, AI.throwAimErrorScale);
+    if (lined && inRange && this.canLaunch(world)) input.repulse = true;
+  }
+
+  /** Aims at where a launched projectile meets `t` (launch speed includes this AI's perk). */
+  private aimIntercept(t: Character, errorScale: number): void {
+    const self = this.self;
+    t.body.getLinearVelocityToRef(tmpVel);
+    interceptPoint(self.position.x, self.position.z, t.position.x, t.position.z, tmpVel.x, tmpVel.z,
+      REPULSE.launchSpeed * self.perks.launch, this.aimPoint);
+    aimAt(self, this.aimPoint.x, this.aimPoint.z, this.aimError * errorScale);
+  }
+
+  /** True when the direction from this AI to `t` points (within AI.throwLineDeg) at t's nearest void. */
+  private linedUp(t: Character, dist: number): boolean {
+    if (dist < 0.01) return false;
+    const self = this.self;
+    const cos = ((t.position.x - self.position.x) * this.voidDir.x + (t.position.z - self.position.z) * this.voidDir.z) / dist;
+    return cos >= Math.cos(AI.throwLineDeg * DEG);
+  }
+
+  /** A point an AI can stand on: on a platform, clear of its edge and of obstacles. */
+  private isStandable(world: AIWorld, x: number, z: number): boolean {
+    const info = world.arena.edgeInfo(x, z);
+    return info.platform !== null && info.distance >= AI.edgeGuardDistance && !world.arena.isObstructed(x, z, AI.wanderObstacleMargin);
+  }
+
+  /** Distance from `t` to its nearest reachable void (direction in this.voidDir), cached per target; −1 if none. */
+  private targetVoid(t: Character, world: AIWorld): number {
+    if (this.voidFor !== t || world.time >= this.voidAt) {
+      this.voidFor = t;
+      this.voidAt = world.time + AI.dropDirRefresh;
+      this.voidDist = findDropDirection(world.arena, t.position.x, t.position.z, this.voidDir);
+    }
+    return this.voidDist;
+  }
+
+  /**
+   * Finisher: repulse ready and a ragdolled opponent (not held) near a void: line up on its far side and
+   * repulse it off (a ragdoll takes RAGDOLL.knockbackMultiplier). Returns false when it does not apply.
+   */
+  private finish(t: Character, dist: number, world: AIWorld): boolean {
+    if (t.heldBy || !this.canLaunch(world)) return false;
+    const voidDist = this.targetVoid(t, world);
+    if (voidDist < 0 || voidDist > AI.finishReach * t.stabilityMultiplier) return false;
+    const spotX = t.position.x - this.voidDir.x * AI.finishStandoff;
+    const spotZ = t.position.z - this.voidDir.z * AI.finishStandoff;
+    if (!this.isStandable(world, spotX, spotZ)) return false;
+    const self = this.self;
+    const input = self.input;
+    const lined = this.linedUp(t, dist);
+    if (!lined || dist > AI.finishFireDist) {
+      const toSpot = steerTo(self, world, spotX, spotZ);
+      input.sprint = toSpot > 3;
+    }
+    aimAt(self, t.position.x, t.position.z, this.aimError * AI.throwAimErrorScale);
+    if (lined && dist <= AI.finishFireDist) input.repulse = true;
+    return true;
+  }
+
+  private canAttract(world: AIWorld): boolean {
+    const self = this.self;
+    const powerOk = self.attracting ? self.power > 0 : self.power >= POWER.restartThreshold;
+    return powerOk && world.time >= this.attractReadyAt;
+  }
+
+  /** GRAB: pull a ragdolled opponent into the magnet, then carry it off (AGENTS.md §19, §24.1). */
+  private grab(world: AIWorld): void {
+    const self = this.self;
+    const t = this.target;
+    if (!t || !t.alive || !t.ragdolled || (t.heldBy && t.heldBy !== self)) {
+      this.behavior = t && t.alive ? Behavior.ATTACK : Behavior.WANDER;
+      this.decisionTimer = 0;
+      return;
+    }
+    if (t.heldBy === self) {
+      this.carry(t, world);
+      return;
+    }
+    this.lastCarried = null;
+    const input = self.input;
+    const dist = Math.hypot(t.position.x - self.position.x, t.position.z - self.position.z);
+    if (this.finish(t, dist, world)) return;
+    if (dist > AI.grabApproachDist) {
+      steerTo(self, world, t.position.x, t.position.z);
+      input.sprint = dist > ATTRACT.range * 0.6;
+    }
+    aimAt(self, t.position.x, t.position.z, this.aimError * AI.throwAimErrorScale);
+    if (dist <= ATTRACT.range && this.canAttract(world)) input.attract = true;
+  }
+
+  /**
+   * Holding a ragdolled opponent: throw it toward the nearest void when repulse is ready and the void is close
+   * enough, otherwise walk it to the void and let go once it hangs over it.
+   */
+  private carry(t: Character, world: AIWorld): void {
+    const self = this.self;
+    const input = self.input;
+    this.carrying = true;
+    input.attract = true;
+    if (this.lastCarried !== t) {
+      this.lastCarried = t;
+      this.stats.grabs++;
+      this.dropDirAt = 0;
+    }
+    if (world.time >= this.dropDirAt) {
+      this.dropDirAt = world.time + AI.dropDirRefresh;
+      this.dropDist = findDropDirection(world.arena, self.position.x, self.position.z, this.dropDir);
+      if (this.dropDist < 0) {
+        world.arena.outwardDir(self.position.x, self.position.z, this.dropDir);
+        this.dropDist = Math.max(0, world.arena.edgeInfo(self.position.x, self.position.z).distance);
+      }
+    }
+    const dir = this.dropDir;
+    input.aimYaw = yawOf(dir.x, dir.z);
+
+    // Let go once it hangs far enough out over the void: it falls, and the pull already gave us the credit.
+    if (world.arena.edgeInfo(t.position.x, t.position.z).platform === null) {
+      world.arena.clampToPlatform(t.position.x, t.position.z, 0, this.outward);
+      if (Math.hypot(t.position.x - this.outward.x, t.position.z - this.outward.z) >= AI.dropOverhang) {
+        input.attract = false;
+        this.stats.drops++;
+        this.lastCarried = null;
+        this.behavior = Behavior.ATTACK;
+        this.decisionTimer = 0;
+        return;
+      }
+    }
+    if (this.dropDist <= AI.throwVoidRange && this.canLaunch(world)) {
+      input.repulse = true;
+      return;
+    }
+    const walk = this.dropDist - AI.carryStandoff;
+    if (walk > 0.3) {
+      steerTo(self, world, self.position.x + dir.x * walk, self.position.z + dir.z * walk);
+      input.sprint = walk > 3;
+      input.aimYaw = yawOf(dir.x, dir.z); // steerTo does not aim, but keep facing the void while walking
+    }
   }
 }
-

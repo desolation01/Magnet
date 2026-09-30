@@ -8,7 +8,7 @@ import { ShadowGenerator } from "@babylonjs/core/Lights/Shadows/shadowGenerator"
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { CreateCapsule } from "@babylonjs/core/Meshes/Builders/capsuleBuilder";
-import { CHARACTER, MOVE, POWER, STABILITY } from "../config";
+import { CHARACTER, MOVE, NO_PERKS, POWER, RAGDOLL, STABILITY, type MagnetPerks } from "../config";
 import { clampHorizontal, lerpAngle, moveTowardsXZ, smoothFactor, yawOf } from "../util/math";
 import { AnimState, CharacterVisual } from "./CharacterVisual";
 import { GroundQuery } from "./GroundQuery";
@@ -63,6 +63,8 @@ export class Character {
   power: number = POWER.max;
   repulseCooldown = 0;
   attracting = false;
+  /** Magnet perks: NO_PERKS for the player, the difficulty's aiPerks for AI. */
+  perks: MagnetPerks = NO_PERKS;
 
   knockbackTimer = 0;
   /** Bounce-pad flight (not a hit): seconds left, movement control, launch velocity and grounded lock. */
@@ -75,8 +77,8 @@ export class Character {
   pulled = false;
   /** Character whose magnet is holding this one. */
   heldBy: Character | null = null;
-  /** Seconds each attacker has been continuously pulling or holding this character (AGENTS.md §8.1). */
-  readonly pullTime = new Map<Character, number>();
+  /** Seconds of ragdoll left (AGENTS.md §24.1): no control, can be attracted, extra knockback. */
+  ragdollTimer = 0;
   /** Timestamps (match time) until which a given attacker may not pull or grab this character. */
   readonly regrabLockUntil = new Map<Character, number>();
   /** Per-projectile cooldown for stability hits (AGENTS.md §24). */
@@ -134,8 +136,17 @@ export class Character {
   }
 
   /** Movement multiplier from knockback / being pulled / being held. */
+  get ragdolled(): boolean {
+    return this.ragdollTimer > 0;
+  }
+
+  /** Starts a ragdoll. A character that is already ragdolled keeps its current timer (no extension). */
+  startRagdoll(): void {
+    if (this.alive && !this.ragdolled) this.ragdollTimer = RAGDOLL.duration;
+  }
+
   get controlFactor(): number {
-    if (!this.controlEnabled || this.heldBy) return 0;
+    if (!this.controlEnabled || this.heldBy || this.ragdolled) return 0;
     if (this.knockbackTimer > 0 || this.pulled) return MOVE.knockbackControl;
     if (this.flightTimer > 0) return this.flightControl;
     return 1;
@@ -157,8 +168,8 @@ export class Character {
   /** Adds a velocity change scaled by the stability multiplier and starts knockback (AGENTS.md §12, §24). */
   applyKnockback(dv: Vector3, attacker: Character | null, stabilityLoss: number, kind = "repulse"): void {
     if (!this.alive) return;
-    this.lastHitKind = `${kind}:${Math.round(Math.hypot(dv.x, dv.z) * this.stabilityMultiplier)}`;
-    const mult = this.stabilityMultiplier;
+    const mult = this.stabilityMultiplier * (this.ragdolled ? RAGDOLL.knockbackMultiplier : 1);
+    this.lastHitKind = `${kind}:${Math.round(Math.hypot(dv.x, dv.z) * mult)}`;
     this.body.getLinearVelocityToRef(this.velocity);
     // Only horizontal speed scales with stability; scaling lift too would square the flight distance.
     this.velocity.addInPlaceFromFloats(dv.x * mult, dv.y, dv.z * mult);
@@ -202,6 +213,7 @@ export class Character {
     }
 
     if (this.knockbackTimer > 0) this.knockbackTimer = Math.max(0, this.knockbackTimer - dt);
+    if (this.ragdollTimer > 0) this.ragdollTimer = Math.max(0, this.ragdollTimer - dt);
     if (this.repulseCooldown > 0) this.repulseCooldown = Math.max(0, this.repulseCooldown - dt);
     if (this.repulseAnimTimer > 0) this.repulseAnimTimer = Math.max(0, this.repulseAnimTimer - dt);
     this.stability = Math.min(STABILITY.max, this.stability + STABILITY.regenPerSec * dt);
@@ -253,7 +265,9 @@ export class Character {
 
     // Facing: aim while using the magnet, otherwise movement direction.
     let targetYaw = this.facingYaw;
-    if (this.attracting || this.repulseAnimTimer > 0) {
+    if (this.ragdolled) {
+      // A limp body does not turn.
+    } else if (this.attracting || this.repulseAnimTimer > 0) {
       targetYaw = input.aimYaw;
     } else if (input.moveDir.lengthSquared() > 0.01 && control > 0) {
       targetYaw = yawOf(input.moveDir.x, input.moveDir.z);
@@ -263,7 +277,8 @@ export class Character {
 
     const hSpeed = Math.hypot(this.velocity.x, this.velocity.z);
     let state: AnimState;
-    if (this.knockbackTimer > 0 || this.heldBy) state = AnimState.KNOCKBACK;
+    if (this.ragdolled) state = AnimState.RAGDOLL;
+    else if (this.knockbackTimer > 0 || this.heldBy) state = AnimState.KNOCKBACK;
     else if (!this.grounded) state = AnimState.AIR;
     else if (hSpeed > 0.5) state = AnimState.MOVE;
     else state = AnimState.IDLE;
@@ -273,7 +288,7 @@ export class Character {
   dispose(): void {
     this.alive = false;
     this.heldBy = null;
-    this.pullTime.clear();
+    this.ragdollTimer = 0;
     this.regrabLockUntil.clear();
     this.hitCooldowns.clear();
     this.visual.dispose();

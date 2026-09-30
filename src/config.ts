@@ -98,10 +98,15 @@ export const ATTRACT = {
   springStiffness: 60,
   springDamping: 10,
   maxHeldCharacters: 1,
-  characterPullTime: 1, // max continuous pull + hold of one character by the same attacker
-  regrabLockout: 3, // after that, the attacker's magnet ignores that character for this long
+  regrabLockout: 0.75, // after launching a held character, the thrower's magnet ignores it for this long
   objectRegrabLockout: 0.75, // after launching a held object, the thrower's magnet ignores it for this long
   pulledControl: 0.3, // movement control of a character being pulled
+};
+
+/** Ragdoll after a projectile hit (AGENTS.md §24.1). Only ragdolled characters can be attracted. */
+export const RAGDOLL = {
+  duration: 3, // further hits during a ragdoll do not extend it
+  knockbackMultiplier: 1.85, // horizontal knockback while ragdolled: about 2× the travel distance (stacks with stability)
 };
 
 export const POWER = {
@@ -135,6 +140,7 @@ export const STABILITY = {
   objectHitCooldown: 0.5,
   objectHitTransfer: 0.7, // fraction of the projectile's horizontal velocity given to the victim
   objectHitLift: 3,
+  throwCreditTime: 2, // an object hit within this many seconds of its launch is credited to the launcher
   regenPerSec: 1,
   /** Knockback multiplier = 1 + extraKnockback × (100 − stability) / 100. */
   extraKnockback: 0.6,
@@ -374,9 +380,42 @@ export const AI = {
   flankDistance: 7, // flankers stand this far behind the target (opposite its nearest edge)
   repulseHeldRange: 12,
   repulseCloseRange: 8,
-  objectSearchRadius: 10,
-  objectComboTimeout: 4,
-  objectComboCooldown: 3,
+  // Kill combos (user request 2026-09-30): throw an object to ragdoll an opponent, then grab the ragdolled
+  // opponent and drop or throw it off the arena.
+  objectSearchRadius: 20,
+  objectDetour: 8, // a combo object may be up to this much farther away than the target
+  objectComboChanceBase: 0.4, // chance to start an object combo = base + objectUse × difficulty.objectUseMultiplier
+  objectApproachDist: 3.5, // walk this close to the object while pulling it
+  objectComboTimeout: 6,
+  objectComboCooldown: 2,
+  throwRange: 7, // with a held object, walk to within this of the target before launching it
+  maxLeadTime: 1, // throws aim at the target's intercept point, at most this many seconds ahead
+  // Edge-line throws: with a held object, stand on the far side of the target from its nearest void so the hit
+  // drives it off. Only worth the walk when the void is within throwKillReach × target stability multiplier
+  // (+ throwLineSlack); otherwise the AI throws from where it is (the ragdoll alone sets up a grab).
+  throwKillReach: 9, // an object hit sends a full-stability character about this far
+  throwLineSlack: 6,
+  throwStandoff: 6, // throw spot distance behind the target
+  throwLineDeg: 30, // lined up when the AI → target direction is within this of the target → void direction
+  // Finisher: an AI with repulse ready repulses a ragdolled opponent (not held by anyone) into a void this close to it
+  finishReach: 8, // × the target's stability multiplier (a point-blank repulse on a ragdoll sends it ~8.9)
+  finishStandoff: 2.5, // line-up spot distance behind the target
+  finishFireDist: 4, // repulse once this close and lined up
+  flankBonus: 0.4, // added to every personality's flankBias for direct repulses (pushes targets toward an edge)
+  throwLowPower: 40, // below this magnet power, launch as soon as the target is within repulseHeldRange
+  throwAimErrorScale: 0.4, // × difficulty aim error when launching a held object (throws lead the target)
+  grabSearchRadius: 22, // ragdolled opponents within this are grabbed (highest priority after safety)
+  grabApproachDist: 3.5, // walk this close to a ragdolled opponent while pulling it
+  grabApproachSpeed: 9, // for "can I reach it before its ragdoll ends": estimated closing speed
+  grabMinRagdollLeft: 0.6, // ...plus at least this much ragdoll time left
+  throwVoidRange: 18, // holding a character with repulse ready: throw it if the void is this close in the drop direction
+  carryStandoff: 1, // carry a grabbed character until this far from the void, facing it, then drop it
+  carryEdgeGuardDistance: 0.6, // edge guard distance while carrying (normal: edgeGuardDistance)
+  dropOverhang: 0.6, // drop the carried character once its center is this far out over the void
+  dropDirSamples: 16, // directions scanned for the nearest reachable void
+  dropScanStep: 0.75,
+  dropScanMax: 24,
+  dropDirRefresh: 0.25, // seconds between drop-direction scans while carrying
   dodgeThreatRange: 12,
   dodgeFacingDeg: 20,
   dodgeDuration: 0.5,
@@ -397,8 +436,8 @@ export const AI = {
   attractChanceAggression: 0.5,
   // Repulse pacing: after firing, an AI waits cooldown + rest before it may repulse again.
   // rest = range(repulseRestMin, repulseRestMax) × (repulseRestAggressionBase − aggression) × difficulty.repulseRestMultiplier
-  repulseRestMin: 3,
-  repulseRestMax: 6,
+  repulseRestMin: 1.5,
+  repulseRestMax: 3,
   repulseRestAggressionBase: 1.4,
   openingRepulseMin: 5, // no AI repulses before a random time in [min, max] after GO!
   openingRepulseMax: 9,
@@ -408,12 +447,21 @@ export const AI = {
   bridgeCenterGain: 0.8,
   wanderObstacleMargin: 1, // wander points are re-picked if within this of a raised block or pillar
   wanderPickTries: 6, // on a bridge, AI steering is pulled back toward the bridge centerline
+  ragdollTargetBonus: 0.6, // target score bonus for a ragdolled opponent (it can be grabbed and thrown)
   lowStability: 30, // below this, cautious AIs retreat to recover
   retreatRadius: 7, // RETREAT on the hub moves radially inward to this radius
   walkwayEntryInset: 2, // routing waypoints sit this far inside a platform, in line with the walkway
   walkwayAlignLateral: 0.8, // closer than this to a walkway's centerline counts as lined up with it
   walkwayCorridorExtend: 2.5, // edge distance is raised near walkway ends (this far along the axis)
   walkwayCorridorShrink: 0.3, // ...within the walkway width minus this
+  // Late game (user decision 2026-09-29): on the 1.5× arena the last few AI stalled in the hub center.
+  // Once at most lateGameAliveAI AI remain, they push harder: more flanking (pushes targets toward an edge),
+  // more repulse commitment, shorter rests and a stronger preference for targets near an edge.
+  lateGameAliveAI: 5,
+  lateGameFlankBonus: 0.5, // added to flankBias
+  lateGameRepulseChanceBonus: 0.3, // added to the per-decision repulse commitment chance
+  lateGameRestMultiplier: 0.4, // × repulse rest
+  lateGameEdgeWeight: 2, // × the "target near an edge" score bonus
   walkwayEntryWindow: 1.5, // lined up and within this of the entry point (or past it) counts as entering the walkway
   rngSeed: 1337,
 };
@@ -444,6 +492,18 @@ export const AI_ROSTER: PersonalityName[] = [
 
 export type Difficulty = "EASY" | "NORMAL" | "HARD";
 
+/**
+ * Magnet perks (multipliers). The player always has NO_PERKS; AI get their difficulty's `aiPerks`
+ * (user decision 2026-09-30: AI may cheat so they can finish kills).
+ */
+export interface MagnetPerks {
+  cooldown: number; // × repulse cooldown
+  launch: number; // × launch speed of held objects/characters
+  pull: number; // × attract pull acceleration
+}
+
+export const NO_PERKS: MagnetPerks = { cooldown: 1, launch: 1, pull: 1 };
+
 export interface DifficultySettings {
   decisionInterval: number;
   reactionDelay: number;
@@ -453,12 +513,16 @@ export interface DifficultySettings {
   dodgeChance: number;
   objectUseMultiplier: number;
   repulseRestMultiplier: number;
+  aiPerks: MagnetPerks;
 }
 
 export const DIFFICULTY: Record<Difficulty, DifficultySettings> = {
-  EASY: { decisionInterval: 0.4, reactionDelay: 0.5, aimErrorDeg: 20, edgeMultiplier: 0.7, mistakeChance: 0.15, dodgeChance: 0.1, objectUseMultiplier: 0.5, repulseRestMultiplier: 1.5 },
-  NORMAL: { decisionInterval: 0.3, reactionDelay: 0.3, aimErrorDeg: 10, edgeMultiplier: 1.0, mistakeChance: 0.07, dodgeChance: 0.3, objectUseMultiplier: 1.0, repulseRestMultiplier: 1.0 },
-  HARD: { decisionInterval: 0.2, reactionDelay: 0.15, aimErrorDeg: 4, edgeMultiplier: 1.3, mistakeChance: 0.02, dodgeChance: 0.6, objectUseMultiplier: 1.5, repulseRestMultiplier: 0.7 },
+  EASY: { decisionInterval: 0.4, reactionDelay: 0.5, aimErrorDeg: 20, edgeMultiplier: 0.7, mistakeChance: 0.15, dodgeChance: 0.1, objectUseMultiplier: 0.5, repulseRestMultiplier: 1.5,
+    aiPerks: { cooldown: 1, launch: 1, pull: 1 } },
+  NORMAL: { decisionInterval: 0.3, reactionDelay: 0.3, aimErrorDeg: 10, edgeMultiplier: 1.0, mistakeChance: 0.07, dodgeChance: 0.3, objectUseMultiplier: 1.0, repulseRestMultiplier: 1.0,
+    aiPerks: { cooldown: 0.7, launch: 1.15, pull: 1.4 } },
+  HARD: { decisionInterval: 0.2, reactionDelay: 0.15, aimErrorDeg: 4, edgeMultiplier: 1.3, mistakeChance: 0.02, dodgeChance: 0.6, objectUseMultiplier: 1.5, repulseRestMultiplier: 0.7,
+    aiPerks: { cooldown: 0.55, launch: 1.25, pull: 1.7 } },
 };
 
 export const DEFAULT_DIFFICULTY: Difficulty = "NORMAL";

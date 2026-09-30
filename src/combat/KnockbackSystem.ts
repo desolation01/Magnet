@@ -11,8 +11,8 @@ export interface ImpactEvents {
 /**
  * Turns fast-moving objects and knocked-back characters into projectiles (AGENTS.md §24).
  * Physics already handles the collision itself; this adds the knockback state, the
- * stability loss and a velocity transfer so the victim's movement controller does
- * not cancel the hit.
+ * stability loss, a velocity transfer so the victim's movement controller does
+ * not cancel the hit, and the ragdoll (§24.1).
  */
 export class KnockbackSystem {
   private readonly v = new Vector3();
@@ -27,13 +27,15 @@ export class KnockbackSystem {
       if (!o.alive || o.heldBy) continue;
       o.body.getLinearVelocityToRef(this.v);
       if (this.v.lengthSquared() < this.minSpeedSq) continue;
-      this.checkHits(o, o.position, o.radius, time, characters, null);
+      // A recently launched object carries its launcher's credit; otherwise the victim's last attacker keeps it.
+      const thrower = o.launchedBy && time - o.launchedAt < STABILITY.throwCreditTime ? o.launchedBy : null;
+      this.checkHits(o, o.position, o.radius, time, characters, null, thrower);
     }
     for (const c of characters) {
       if (!c.alive || c.knockbackTimer <= 0 || c.heldBy) continue;
       c.body.getLinearVelocityToRef(this.v);
       if (this.v.lengthSquared() < this.minSpeedSq) continue;
-      this.checkHits(c, c.position, CHARACTER.radius, time, characters, c);
+      this.checkHits(c, c.position, CHARACTER.radius, time, characters, c, null);
     }
   }
 
@@ -44,6 +46,7 @@ export class KnockbackSystem {
     time: number,
     characters: Character[],
     self: Character | null,
+    thrower: Character | null,
   ): void {
     const reach = radius + CHARACTER.radius + 0.25;
     const reachSq = reach * reach;
@@ -71,7 +74,9 @@ export class KnockbackSystem {
       const along = this.victimV.x * nx + this.victimV.z * nz;
       const extra = Math.max(0, push - along);
       this.dv.set(nx * extra, STABILITY.objectHitLift, nz * extra);
-      t.applyKnockback(this.dv, self ?? t.lastHitBy, STABILITY.objectHit, self ? "charHit" : "objHit");
+      t.applyKnockback(this.dv, self ?? thrower ?? t.lastHitBy, STABILITY.objectHit, self ? "charHit" : "objHit");
+      // After the hit's own knockback, so the extra ragdoll knockback applies from the next hit on.
+      t.startRagdoll();
       this.events.onImpact(t, t.position, closing);
     }
   }
@@ -81,7 +86,6 @@ export class KnockbackSystem {
     for (const c of characters) {
       for (const [k, until] of c.hitCooldowns) if (until <= time) c.hitCooldowns.delete(k);
       for (const [k, until] of c.regrabLockUntil) if (until <= time) c.regrabLockUntil.delete(k);
-      for (const k of c.pullTime.keys()) if (!k.alive || !k.attracting) c.pullTime.delete(k);
     }
   }
 }

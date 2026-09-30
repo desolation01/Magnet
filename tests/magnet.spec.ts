@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { ATTRACT, REPULSE } from "../src/config";
+import { ATTRACT, RAGDOLL, REPULSE } from "../src/config";
 import {
   clearPlatformObjects,
   dist2D,
@@ -28,14 +28,17 @@ const E = SITES.E;
 const WEST = -Math.PI / 2;
 const TOWARD_PLUS_Z = 0; // yaw 0 faces +Z (south)
 const SITE = { x: E.x + 3.5, y: 1.2, z: 0 };
-// ATTRACT.characterPullTime (1 s) and ATTRACT.regrabLockout (3 s) as of commit 4f5da36. Kept as literals:
-// the character-pull rules are being reworked in another session.
-const PULL_MS = 1_000;
-const REGRAB_LOCKOUT_MS = 3_000;
 /** Spawn index of the crate used by the test (the crate nearest the E platform). */
 let CRATE = -1;
 
 const getObject = async (page: Page, index: number) => (await getObjects(page)).find((o) => o.index === index)!;
+/** Puts a character into ragdoll as if a projectile hit it (no knockback). */
+const ragdoll = (page: Page, name: string): Promise<boolean> => page.evaluate((n) => window.__MM_TEST__!.ragdoll(n), name);
+/** Horizontal distance a character travels from `from` during `ms`, sampled every frame. */
+async function maxTravel(page: Page, name: string, from: { x: number; z: number }, ms: number): Promise<number> {
+  const samples = await sampleFrames(page, { character: name }, ms);
+  return Math.max(0, ...samples.map((p) => dist2D(p, from)));
+}
 
 async function setupSite(page: Page): Promise<void> {
   await openGame(page);
@@ -80,78 +83,120 @@ test.describe("magnet: attract (§8, §25)", () => {
     expectNoErrors(errors);
   });
 
-  test("attract pulls an AI toward the player", async ({ page }) => {
+  test("attract does not pull a character that is not ragdolled", async ({ page }) => {
     await teleport(page, "AI-01", E.x - 2.5, 1.2, 0);
     await waitGrounded(page, "AI-01");
-    const player = await getPlayer(page);
     const a0 = (await getCharacter(page, "AI-01"))!;
-    const d0 = dist2D(a0, player);
-
     await playerInput(page, { attract: true });
-    // The capture must happen inside the 1 s pull window (ATTRACT.characterPullTime).
-    const [samples] = await Promise.all([
-      sampleFrames(page, { character: "AI-01" }, PULL_MS),
-      expect.poll(async () => (await getCharacter(page, "AI-01"))!.heldBy, { timeout: PULL_MS, intervals: [50] }).toBe("PLAYER"),
-    ]);
-    const d1 = dist2D(samples[samples.length - 1], player);
-    console.log(`AI distance ${d0.toFixed(2)} → ${d1.toFixed(2)}, max per-frame step ${maxStep(samples).toFixed(2)}`);
-    expect(d1).toBeLessThan(d0 - 1.5);
-    expect(maxStep(samples)).toBeLessThan(1.5);
+    const samples = await sampleFrames(page, { character: "AI-01" }, 1_000);
+    const a1 = (await getCharacter(page, "AI-01"))!;
     await playerInput(page, { attract: false });
-    await expect.poll(async () => (await getCharacter(page, "AI-01"))!.heldBy).toBeNull();
+    expect(a1.pulled || a1.heldBy !== null, "a standing AI is never grabbed").toBe(false);
+    expect(Math.max(...samples.map((p) => dist2D(p, a0))), "a standing AI does not move").toBeLessThan(0.3);
     expectNoErrors(errors);
   });
 
-  test("a character can only be pulled for 1 s in a row, then is ignored for 3 s", async ({ page }) => {
+  test("a ragdolled AI is pulled and held until its ragdoll ends", async ({ page }) => {
     await teleport(page, "AI-01", E.x - 2.5, 1.2, 0);
     await waitGrounded(page, "AI-01");
-    // Per frame, for `ms`: is AI-01 being dragged or held by the player's magnet?
-    const sample = (ms: number) =>
-      page.evaluate(
-        (dur) =>
-          new Promise<{ t: number; on: boolean }[]>((resolve) => {
-            const out: { t: number; on: boolean }[] = [];
-            const start = performance.now();
-            const tick = (): void => {
-              const s = window.__MM_TEST__!.getCharacter("AI-01");
-              out.push({ t: performance.now() - start, on: !!s && (s.pulled || s.heldBy === "PLAYER") });
-              if (performance.now() - start < dur) requestAnimationFrame(tick);
-              else resolve(out);
-            };
-            requestAnimationFrame(tick);
-          }),
-        ms,
-      );
-    // Contiguous runs of contact / no contact, in ms.
-    const toRuns = (samples: { t: number; on: boolean }[]) => {
-      const runs: { on: boolean; ms: number }[] = [];
-      for (let i = 1; i < samples.length; i++) {
-        const on = samples[i].on;
-        const ms = samples[i].t - samples[i - 1].t;
-        if (runs.length && runs[runs.length - 1].on === on) runs[runs.length - 1].ms += ms;
-        else runs.push({ on, ms });
-      }
-      return runs;
+    const player = await getPlayer(page);
+    const d0 = dist2D((await getCharacter(page, "AI-01"))!, player);
+
+    // Record every frame in the page, from the ragdoll + attract start, until a little after the ragdoll ends.
+    await ragdoll(page, "AI-01");
+    await playerInput(page, { attract: true });
+    type Frame = { x: number; y: number; z: number; held: boolean; pulled: boolean; ragdoll: number; attracting: boolean };
+    const frames = await page.evaluate((ms) => new Promise<Frame[]>((resolve) => {
+      const api = window.__MM_TEST__!;
+      const out: Frame[] = [];
+      const start = performance.now();
+      const tick = (): void => {
+        const a = api.getCharacter("AI-01");
+        const p = api.getCharacter("PLAYER");
+        if (a && p) {
+          out.push({ x: a.x, y: a.y, z: a.z, held: a.heldBy === "PLAYER", pulled: a.pulled, ragdoll: a.ragdoll, attracting: p.attracting });
+        }
+        if (performance.now() - start < ms) requestAnimationFrame(tick); else resolve(out);
+      };
+      requestAnimationFrame(tick);
+    }), RAGDOLL.duration * 1000 + 600);
+    await playerInput(page, { attract: false });
+
+    const firstHeld = frames.findIndex((f) => f.held);
+    expect(firstHeld, "the ragdolled AI is captured").toBeGreaterThanOrEqual(0);
+    const closest = Math.min(...frames.map((f) => dist2D(f, player)));
+    console.log(`AI distance ${d0.toFixed(2)} → ${closest.toFixed(2)}, max per-frame step ${maxStep(frames).toFixed(2)}`);
+    expect(closest).toBeLessThan(d0 - 1.5);
+    expect(maxStep(frames), "no teleporting").toBeLessThan(1.5);
+
+    // Held for as long as the ragdoll lasts; released on the frame the ragdoll ends, with attract still on.
+    const released = frames.findIndex((f, i) => i > firstHeld && !f.held);
+    expect(released, "released before the recording ends").toBeGreaterThan(firstHeld);
+    // The last held sample may already read ragdoll 0: the sample can land between the character update
+    // (timer reaches 0) and the magnet update (release) of the same frame.
+    const heldNotRagdolled = frames.slice(firstHeld, released).filter((f) => f.ragdoll <= 0).length;
+    expect(heldNotRagdolled, "held only while ragdolled (± one frame)").toBeLessThanOrEqual(1);
+    expect(frames[released].ragdoll).toBe(0);
+    expect(frames[released].attracting, "released by the ragdoll ending, not by attract stopping").toBe(true);
+    const after = frames.slice(released).filter((f) => f.attracting);
+    console.log(`after the ragdoll: ${after.length} attracting frames, ${after.filter((f) => f.pulled || f.held).length} with the AI pulled`);
+    expect(after.length).toBeGreaterThan(5);
+    expect(after.every((f) => !f.pulled && !f.held), "no pull after the ragdoll").toBe(true);
+    expectNoErrors(errors);
+  });
+
+  test("a thrown crate ragdolls the AI it hits, and a second hit does not extend the ragdoll", async ({ page }) => {
+    // AI-01 on the spoke bridge, beyond repulse range, so only the crate reaches it.
+    await teleport(page, "AI-01", SITE.x - (REPULSE.range + 1), 1.2, 0);
+    await waitGrounded(page, "AI-01");
+    await teleportObject(page, CRATE, E.x + 1, 0.6, 0);
+    await playerInput(page, { attract: true });
+    await expect.poll(async () => (await getObject(page, CRATE)).heldBy, { timeout: 4_000 }).toBe("PLAYER");
+    expect((await getCharacter(page, "AI-01"))!.ragdoll).toBe(0);
+    await playerInput(page, { repulse: true, attract: false });
+    await expect.poll(async () => (await getCharacter(page, "AI-01"))?.ragdoll ?? 0, { timeout: 1_500, intervals: [30] }).toBeGreaterThan(0);
+
+    // No extension: re-triggering a second later leaves the remaining time running down.
+    await page.waitForTimeout(1_000);
+    await ragdoll(page, "AI-01");
+    const left = (await getCharacter(page, "AI-01"))?.ragdoll ?? 0;
+    console.log(`ragdoll left after a second hit 1 s in: ${left}`);
+    expect(left).toBeLessThan(RAGDOLL.duration - 0.7);
+    expectNoErrors(errors);
+  });
+
+  test("a ragdolled AI is knocked back about twice as far by a repulse", async ({ page }) => {
+    const spot = { x: SITE.x - 2, z: 0 };
+    const travel = async (name: string, ragdolled: boolean): Promise<number> => {
+      await teleport(page, name, spot.x, 1.2, spot.z);
+      await waitGrounded(page, name);
+      await page.waitForTimeout(200);
+      if (ragdolled) await ragdoll(page, name);
+      await playerInput(page, { repulse: true });
+      return maxTravel(page, name, spot, 1_800);
     };
+    const normal = await travel("AI-01", false);
+    await teleport(page, "AI-01", E.x, 1.2, 5); // out of the lane
+    await expect.poll(async () => (await getPlayer(page)).repulseCooldown, { timeout: REPULSE.cooldown * 1000 + 1_000 }).toBe(0);
+    const limp = await travel("AI-02", true);
+    console.log(`repulse travel from 2 units: normal ${normal.toFixed(2)}, ragdolled ${limp.toFixed(2)} (×${(limp / normal).toFixed(2)})`);
+    expect(limp / normal).toBeGreaterThan(1.7);
+    expect(limp / normal).toBeLessThan(2.4);
+    expectNoErrors(errors);
+  });
 
-    // Attract held for 3.8 s (magnet power lasts 4 s): one ~1 s pull, then nothing.
-    await playerInput(page, { attract: true });
-    const runs = toRuns(await sample(3_800));
-    await playerInput(page, { attract: false });
-    console.log(`pull runs: ${runs.map((r) => `${r.on ? "ON" : "off"} ${Math.round(r.ms)}`).join(", ")}`);
-    const first = runs.findIndex((r) => r.on);
-    expect(first).toBeGreaterThanOrEqual(0);
-    expect(runs[first].ms).toBeGreaterThan(PULL_MS - 150);
-    expect(runs[first].ms).toBeLessThan(PULL_MS + 150);
-    expect(runs.slice(first + 1).every((r) => !r.on), "no second pull during the 3 s lockout").toBe(true);
-    expect(runs[first + 1].ms).toBeGreaterThan(REGRAB_LOCKOUT_MS - 500);
-
-    // After the lockout (and some power regen) the same magnet can pull it again.
-    await page.waitForTimeout(1_500);
-    await playerInput(page, { attract: true });
-    const again = toRuns(await sample(500));
-    await playerInput(page, { attract: false });
-    expect(again.some((r) => r.on), "pull works again after the lockout").toBe(true);
+  test("a ragdolled player cannot move, attract or repulse", async ({ page }) => {
+    await ragdoll(page, "PLAYER");
+    await playerInput(page, { moveDir: { x: -1, z: 0 }, attract: true, repulse: true });
+    await page.waitForTimeout(500);
+    const p = await getPlayer(page);
+    expect(p.ragdoll).toBeGreaterThan(0);
+    expect(p.attracting).toBe(false);
+    expect(p.repulseCooldown, "repulse did not fire").toBe(0);
+    expect(Math.hypot(p.vx, p.vz), "no movement").toBeLessThan(0.5);
+    // Control comes back when the ragdoll ends.
+    await expect.poll(async () => (await getPlayer(page)).attracting, { timeout: RAGDOLL.duration * 1000 + 500 }).toBe(true);
+    await playerInput(page, { moveDir: { x: 0, z: 0 }, attract: false });
     expectNoErrors(errors);
   });
 
@@ -160,6 +205,7 @@ test.describe("magnet: attract (§8, §25)", () => {
     await teleportObject(page, CRATE, SITE.x - (ATTRACT.range + 1.5), 0.6, 0);
     await teleport(page, "AI-01", E.x, 1.2, 4);
     await page.waitForTimeout(500);
+    await ragdoll(page, "AI-01"); // pullable, but outside the cone
     const c0 = await getObject(page, CRATE);
     const a0 = (await getCharacter(page, "AI-01"))!;
     await playerInput(page, { attract: true });
@@ -316,7 +362,7 @@ test.describe("magnet: repulse (§9, §26)", () => {
 
   test("one-shot particle bursts finish and dispose themselves during a match", async ({ page }) => {
     for (let i = 0; i < 3; i++) {
-      await expect.poll(async () => (await getPlayer(page)).repulseCooldown, { timeout: REPULSE.cooldown * 1000 + 2_000 }).toBe(0);
+      await expect.poll(async () => (await getPlayer(page)).repulseCooldown, { timeout: REPULSE.cooldown * 1000 + 1_500 }).toBe(0);
       await playerInput(page, { repulse: true });
       await page.waitForTimeout(300);
     }

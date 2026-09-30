@@ -43,7 +43,7 @@ export class MagnetSystem {
     // 1. Attract state + magnet power
     for (const c of characters) {
       if (!c.alive) continue;
-      const canUse = c.controlEnabled && c.knockbackTimer <= 0;
+      const canUse = c.controlEnabled && c.knockbackTimer <= 0 && !c.ragdolled;
       let want = canUse && c.input.attract;
       if (want && !c.attracting && c.power < POWER.restartThreshold) want = false;
       if (want) {
@@ -57,11 +57,11 @@ export class MagnetSystem {
       }
       if (want !== c.attracting) {
         c.attracting = want;
-        if (!want) this.releaseAll(c, characters, objects, time);
+        if (!want) this.releaseAll(c, characters, objects);
         this.events.onAttractChange(c, want);
       }
-      // Characters that are knocked back drop what they hold.
-      if (c.knockbackTimer > 0) this.releaseAll(c, characters, objects, time);
+      // Characters that are knocked back or ragdolled drop what they hold.
+      if (c.knockbackTimer > 0 || c.ragdolled) this.releaseAll(c, characters, objects);
     }
 
     // 2. Pull + capture
@@ -77,7 +77,7 @@ export class MagnetSystem {
         if (o.launchedBy === c && time < o.launchLockUntil) continue;
         const d = this.inCone(c, o.position, ATTRACT.range, ATTRACT_COS);
         if (d < 0) continue;
-        this.pull(o.body, o.position, d, dt);
+        this.pull(o.body, o.position, d, dt, c.perks.pull);
         if (!o.heldBy && Vector3.Distance(o.position, this.hold) <= ATTRACT.captureDistance + o.radius * 0.5) {
           o.heldBy = c;
           o.body.setGravityFactor(0);
@@ -85,27 +85,12 @@ export class MagnetSystem {
       }
 
       for (const t of characters) {
-        if (t === c || !t.alive) continue;
-        const held = t.heldBy === c;
-        let d = 0;
-        if (!held) {
-          if ((t.regrabLockUntil.get(c) ?? 0) > time) continue;
-          d = this.inCone(c, t.position, ATTRACT.range, ATTRACT_COS);
-          if (d < 0) {
-            t.pullTime.delete(c);
-            continue;
-          }
-        }
-        // A character can be pulled + held by the same attacker for a limited time in a row.
-        const pullTime = (t.pullTime.get(c) ?? 0) + dt;
-        if (pullTime >= ATTRACT.characterPullTime) {
-          if (held) this.releaseCharacter(t, time);
-          else this.lockOut(t, c, time);
-          continue;
-        }
-        t.pullTime.set(c, pullTime);
-        if (held) continue;
-        this.pull(t.body, t.position, d, dt);
+        // Only ragdolled characters can be attracted (AGENTS.md §8.1, §24.1).
+        if (t === c || !t.alive || !t.ragdolled || t.heldBy === c) continue;
+        if ((t.regrabLockUntil.get(c) ?? 0) > time) continue;
+        const d = this.inCone(c, t.position, ATTRACT.range, ATTRACT_COS);
+        if (d < 0) continue;
+        this.pull(t.body, t.position, d, dt, c.perks.pull);
         t.pulled = true;
         t.lastHitBy = c; // a pull that drags someone off the edge earns the elimination credit
         if (
@@ -132,18 +117,19 @@ export class MagnetSystem {
     for (const t of characters) {
       const h = t.heldBy;
       if (!h) continue;
-      if (!t.alive || !h.alive || !h.attracting) {
-        this.releaseCharacter(t, time);
+      // The ragdoll ending releases the character.
+      if (!t.alive || !t.ragdolled || !h.alive || !h.attracting) {
+        this.releaseCharacter(t);
         continue;
       }
-      if (!this.spring(h, t.body, t.position, dt)) this.releaseCharacter(t, time);
+      if (!this.spring(h, t.body, t.position, dt)) this.releaseCharacter(t);
     }
 
     // 4. Repulse
     for (const c of characters) {
       const requested = c.input.repulse;
       c.input.repulse = false;
-      if (!requested || !c.alive || !c.controlEnabled || c.repulseCooldown > 0) continue;
+      if (!requested || !c.alive || !c.controlEnabled || c.ragdolled || c.repulseCooldown > 0) continue;
       this.repulse(c, characters, objects, time);
     }
   }
@@ -161,8 +147,8 @@ export class MagnetSystem {
     return cos >= cosLimit ? d : -1;
   }
 
-  private pull(body: { getLinearVelocityToRef(v: Vector3): void; setLinearVelocity(v: Vector3): void }, p: Vector3, d: number, dt: number): void {
-    const a = ATTRACT.accel * (1 - d / ATTRACT.range);
+  private pull(body: { getLinearVelocityToRef(v: Vector3): void; setLinearVelocity(v: Vector3): void }, p: Vector3, d: number, dt: number, strength: number): void {
+    const a = ATTRACT.accel * strength * (1 - d / ATTRACT.range);
     this.dir.copyFrom(this.hold).subtractInPlace(p);
     const len = this.dir.length();
     if (len < 1e-4) return;
@@ -191,7 +177,7 @@ export class MagnetSystem {
   private repulse(c: Character, characters: Character[], objects: MagneticObject[], time: number): void {
     const sin = Math.sin(c.input.aimYaw);
     const cos = Math.cos(c.input.aimYaw);
-    const launch = REPULSE.launchSpeed;
+    const launch = REPULSE.launchSpeed * c.perks.launch;
 
     // 1. Launch everything held.
     for (const o of objects) {
@@ -199,17 +185,20 @@ export class MagnetSystem {
       this.releaseObject(o);
       o.launchedBy = c;
       o.launchLockUntil = time + ATTRACT.objectRegrabLockout;
+      o.launchedAt = time;
       this.v.set(sin * launch, launch * REPULSE.launchLift, cos * launch);
       o.body.setLinearVelocity(this.v);
     }
     for (const t of characters) {
       if (t.heldBy !== c) continue;
-      this.releaseCharacter(t, time);
+      this.releaseCharacter(t);
+      // Like a launched object, a thrown character is not pulled straight back by the thrower.
+      t.regrabLockUntil.set(c, time + ATTRACT.regrabLockout);
       this.v.set(0, 0, 0);
       t.setVelocity(this.v);
       this.dv.set(sin * launch, launch * REPULSE.launchLift, cos * launch);
       t.applyKnockback(this.dv, c, STABILITY.repulseHit, "launch");
-      this.releaseAll(t, characters, objects, time);
+      this.releaseAll(t, characters, objects);
     }
 
     // 2. Push everything else in the cone or point-blank radius.
@@ -232,10 +221,10 @@ export class MagnetSystem {
       this.dv.x *= REPULSE.characterFactor;
       this.dv.z *= REPULSE.characterFactor;
       t.applyKnockback(this.dv, c, STABILITY.repulseHit);
-      this.releaseAll(t, characters, objects, time);
+      this.releaseAll(t, characters, objects);
     }
 
-    c.repulseCooldown = REPULSE.cooldown;
+    c.repulseCooldown = REPULSE.cooldown * c.perks.cooldown;
     c.repulseAnimTimer = 0.2;
 
     this.magnetPos.set(c.position.x + sin * 1.2, c.position.y + 0.2, c.position.z + cos * 1.2);
@@ -272,25 +261,14 @@ export class MagnetSystem {
     if (o.alive) o.body.setGravityFactor(1);
   }
 
-  private releaseCharacter(t: Character, time: number): void {
-    const h = t.heldBy;
+  private releaseCharacter(t: Character): void {
     t.heldBy = null;
-    if (h) this.lockOut(t, h, time);
     if (t.alive) t.body.setGravityFactor(1);
   }
 
-  /** Ends `attacker`'s pull on `t`; its magnet ignores `t` for the regrab lockout. */
-  private lockOut(t: Character, attacker: Character, time: number): void {
-    t.pullTime.delete(attacker);
-    t.regrabLockUntil.set(attacker, time + ATTRACT.regrabLockout);
-  }
-
   /** Drops everything held by `c`. */
-  releaseAll(c: Character, characters: Character[], objects: MagneticObject[], time: number): void {
+  releaseAll(c: Character, characters: Character[], objects: MagneticObject[]): void {
     for (const o of objects) if (o.heldBy === c) this.releaseObject(o);
-    for (const t of characters) {
-      if (t.heldBy === c) this.releaseCharacter(t, time);
-      t.pullTime.delete(c);
-    }
+    for (const t of characters) if (t.heldBy === c) this.releaseCharacter(t);
   }
 }

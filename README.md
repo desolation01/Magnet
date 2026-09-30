@@ -15,7 +15,7 @@ Knock every opponent off the arena. If you fall below the arena, it's game over.
 | `Shift` (hold) | Sprint |
 | Mouse | Aim / rotate the camera (click the game to lock the pointer, `Esc` to release it) |
 | Left click (hold) | **Attract**: pull objects and players toward you and hold them |
-| Right click | **Repulse**: launch what you're holding and knock back everything in front of you (2 s cooldown) |
+| Right click | **Repulse**: launch what you're holding and knock back everything in front of you (4 s cooldown) |
 
 - **Magnet power** drains while you attract and regenerates when you stop.
 - **Stability** drops each time you're hit. The lower it is, the further the next hit sends you flying. It regenerates over time.

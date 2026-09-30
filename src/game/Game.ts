@@ -85,6 +85,8 @@ export class Game {
   private pruneTimer = 0;
   private debugTimer = 0;
   private readonly eliminationLog: { name: string; time: number; by: string | null; x: number; z: number; speed: number }[] = [];
+  /** Projectile hits on characters this match (playtest metric). */
+  private projectileHits = 0;
 
   constructor(private readonly engine: Engine, canvas: HTMLCanvasElement, havok: HavokPhysicsWithBindings) {
     const scene = new Scene(engine);
@@ -132,6 +134,7 @@ export class Game {
     });
     this.knockback = new KnockbackSystem({
       onImpact: (victim, pos, speed) => {
+        this.projectileHits++;
         this.audio.impact(victim.isPlayer ? null : pos, speed);
         if (victim.isPlayer) {
           this.audio.playerHit();
@@ -169,6 +172,7 @@ export class Game {
       time: +this.matchTime.toFixed(1),
       bounce: { launches: this.bouncePads.launches, pads: this.bouncePads.pads },
       eliminations: this.eliminationLog,
+      projectileHits: this.projectileHits,
       ai: this.match.controllers.map((ctrl) => ({
         name: ctrl.self.name,
         personality: ctrl.personality.name,
@@ -181,6 +185,7 @@ export class Game {
         z: +ctrl.self.position.z.toFixed(1),
         power: Math.round(ctrl.self.power),
         stability: Math.round(ctrl.self.stability),
+        stats: ctrl.stats,
       })),
     });
     // Test-only API (window.__MM_TEST__), active only with `?test` in the URL.
@@ -204,6 +209,7 @@ export class Game {
     this.countdownTime = 0;
     this.matchTime = 0;
     this.eliminationLog.length = 0;
+    this.projectileHits = 0;
     this.lastGoBeep = "";
     this.hud.reset();
     this.controller.clear();
@@ -259,7 +265,7 @@ export class Game {
     } as never);
     this.nameplates.remove(c);
     this.publishDebug(); // alive count changed: publish now rather than at the next throttled refresh
-    this.magnets.releaseAll(c, this.match.characters, this.objects.objects, this.matchTime);
+    this.magnets.releaseAll(c, this.match.characters, this.objects.objects);
     if (c.isPlayer) this.audio.setAttractHum(false);
 
     // After the match has ended, stragglers can still fall: no notifications or sounds over the end screens.

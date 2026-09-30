@@ -94,6 +94,8 @@ export class MagneticObject {
   /** Character that last launched this object with repulse; its magnet ignores the object until launchLockUntil. */
   launchedBy: Character | null = null;
   launchLockUntil = 0;
+  /** Match time of the last launch (object hits shortly after it are credited to launchedBy). */
+  launchedAt = -Infinity;
   alive = true;
 
   constructor(
