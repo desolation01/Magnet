@@ -5,7 +5,7 @@ import { AI, ATTRACT, POWER, REPULSE, type DifficultySettings, type Personality 
 import { angleDelta, DEG, yawOf } from "../util/math";
 import { addCentering, addStrafe, aimAt, Behavior, interceptPoint, steerTo } from "./AIBehavior";
 import {
-  EdgeZone, edgeZone, findComboObject, findDropDirection, findGrabTarget, isLateGame, perceiveOpponents, selectTarget,
+  EdgeZone, edgeZone, findComboObject, findDropDirection, findGrabTarget, isLateGame, nearbyPlayer, perceiveOpponents, selectTarget,
   type AIWorld,
 } from "./AITargeting";
 
@@ -137,6 +137,7 @@ export class AIController {
       case Behavior.GRAB: this.grab(world); break;
     }
 
+    this.separate(world);
     this.keepMoving(world);
     this.guardEdges(world);
 
@@ -209,6 +210,35 @@ export class AIController {
     addStrafe(self, tx, tz, this.strafeDir, AI.idleStrafe);
   }
 
+  /** Steers away from other characters closer than AI.separationRadius so AI do not pile up (not from the target). */
+  private separate(world: AIWorld): void {
+    if (this.carrying || this.behavior === Behavior.DODGE) return;
+    const self = this.self;
+    const here = world.arena.edgeInfo(self.position.x, self.position.z);
+    if (!here.platform || here.platform.kind === "bridge" || here.distance < AI.separationEdgeClearance) return;
+    let sx = 0;
+    let sz = 0;
+    for (const c of world.characters) {
+      if (c === self || c === this.target || !c.alive || c.heldBy === self) continue;
+      const dx = self.position.x - c.position.x;
+      const dz = self.position.z - c.position.z;
+      const d = Math.hypot(dx, dz);
+      if (d >= AI.separationRadius || d < 0.01) continue;
+      const w = 1 - d / AI.separationRadius;
+      sx += (dx / d) * w;
+      sz += (dz / d) * w;
+    }
+    if (sx === 0 && sz === 0) return;
+    const m = self.input.moveDir;
+    m.x += sx * AI.separationWeight;
+    m.z += sz * AI.separationWeight;
+    const ml = Math.hypot(m.x, m.z);
+    if (ml > 1) {
+      m.x /= ml;
+      m.z /= ml;
+    }
+  }
+
   /**
    * Per-frame safety layer on top of the chosen behavior: on a bridge, keep to the centerline;
    * right at a platform edge, drop any outward component of the steering.
@@ -266,13 +296,16 @@ export class AIController {
     const diff = this.difficulty;
     const pers = this.personality;
 
-    perceiveOpponents(self, world, this.perceived);
+    this.lateGame = isLateGame(world);
+    perceiveOpponents(self, world, this.perceived, this.lateGame ? AI.perceptionRadius : AI.localPerceptionRadius);
     const { zone } = edgeZone(world.arena, self.position.x, self.position.z, diff);
     this.zone = zone;
 
     let target = this.target;
     const targetValid = !!target && target.alive && this.perceived.includes(target);
-    if (!targetValid || world.time >= this.targetUntil) {
+    // The player coming close overrides the target hold time (player focus).
+    const player = nearbyPlayer(self, this.perceived);
+    if (!targetValid || world.time >= this.targetUntil || (player && target !== player)) {
       const next = selectTarget(self, this.perceived, pers, zone, world);
       if (next !== target || !targetValid) this.targetUntil = world.time + AI.targetHoldTime;
       target = next;
@@ -280,7 +313,6 @@ export class AIController {
 
     this.aimError = rng.range(-1, 1) * diff.aimErrorDeg * DEG;
     this.edgeMistake = rng.chance(diff.mistakeChance);
-    this.lateGame = isLateGame(world);
     const lateRepulse = this.lateGame ? AI.lateGameRepulseChanceBonus : 0;
     if (!this.wantsRepulse) this.wantsRepulse = rng.chance(AI.repulseChanceBase + AI.repulseChanceAggression * pers.aggression + lateRepulse);
 
@@ -290,7 +322,8 @@ export class AIController {
     const d: Decision = { behavior: Behavior.WANDER, target, object: null, flank: this.flank, useAttract: this.useAttract };
     const carried = this.heldCharacter(world);
     const holdingObject = this.isHoldingObject(world);
-    const grab = carried ?? findGrabTarget(self, this.perceived, world);
+    // With the player close by, only the player is worth grabbing.
+    const grab = carried ?? findGrabTarget(self, this.perceived, world, player);
     // A kill is on (holding something, or a ragdolled opponent to finish): no caution retreats (only DANGER).
     const killOn = holdingObject || grab !== null;
 

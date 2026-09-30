@@ -33,7 +33,7 @@ interface Dump {
   time: number;
   eliminations: Elimination[];
   projectileHits?: number;
-  ai: { name: string; personality: string; alive: boolean; stats?: Record<string, number> }[];
+  ai: { name: string; personality: string; alive: boolean; x: number; z: number; behavior: string; stats?: Record<string, number> }[];
 }
 
 interface MatchSummary {
@@ -86,10 +86,23 @@ test("balance playtest: NORMAL, idle player, noend", async ({ page }) => {
     }
     let dump: Dump;
     let alive: number;
+    // Spread (crowding) samples, once per second while at least 4 AI are alive.
+    let centerShare = 0;
+    let nearestSum = 0;
+    let spreadSamples = 0;
+    const centerBehaviors: Record<string, number> = {};
     for (;;) {
       await page.waitForTimeout(1_000);
       dump = (await page.evaluate(() => window.__MM_DUMP__())) as Dump;
       alive = await page.evaluate(() => window.__MM_DEBUG__.aliveCount);
+      const live = dump.ai.filter((a) => a.alive);
+      if (live.length >= 4) {
+        const center = live.filter((a) => Math.hypot(a.x, a.z) < 10);
+        centerShare += center.length / live.length;
+        for (const a of center) centerBehaviors[a.behavior] = (centerBehaviors[a.behavior] ?? 0) + 1;
+        nearestSum += live.reduce((sum, a) => sum + Math.min(...live.filter((b) => b !== a).map((b) => Math.hypot(a.x - b.x, a.z - b.z))), 0) / live.length;
+        spreadSamples++;
+      }
       if (alive <= 1 || dump.time >= MATCH_LIMIT_S) break;
     }
     const aiElims = dump.eliminations.filter((e) => e.name !== "PLAYER");
@@ -115,6 +128,11 @@ test("balance playtest: NORMAL, idle player, noend", async ({ page }) => {
     }
     const totals: Record<string, number> = {};
     for (const a of dump.ai) for (const [k, v] of Object.entries(a.stats ?? {})) totals[k] = (totals[k] ?? 0) + v;
+    if (spreadSamples) {
+      console.log(`spread: ${Math.round((100 * centerShare) / spreadSamples)}% of AI within 10 of the center, `
+        + `mean nearest-AI distance ${(nearestSum / spreadSamples).toFixed(1)} (${spreadSamples} samples); `
+        + `behaviors in the center: ${JSON.stringify(centerBehaviors)}`);
+    }
     console.log("AI kill-combo totals:", JSON.stringify(totals), "projectile hits:", dump.projectileHits ?? "?");
   }
 

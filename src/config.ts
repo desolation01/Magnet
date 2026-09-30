@@ -55,6 +55,35 @@ export const RENDER = {
   // Retina/5K screens (devicePixelRatio 2) would otherwise render 4× the pixels of a 1× screen.
   // 1.5 measured 57 → 111 FPS at 2560×1440 CSS on an M4 and still looks sharp (AGENTS.md §32).
   maxPixelRatio: 1.5,
+  shadowMapSize: 2048,
+};
+
+/**
+ * Low-end devices (AGENTS.md §32). The tier is picked once at startup; `?quality=low|high`
+ * overrides it. Adaptive resolution then runs on every device.
+ */
+export const QUALITY = {
+  // Low tier when the browser reports at most this much RAM (navigator.deviceMemory, GB) or this
+  // many CPU cores, or when WebGL runs on a software renderer (SwiftShader, llvmpipe).
+  lowMemoryGB: 4,
+  lowCores: 4,
+  low: {
+    antialias: false, // MSAA multiplies fill cost on weak GPUs
+    maxPixelRatio: 1,
+    shadowMapSize: 1024, // 4 MB of GPU memory instead of 16 MB
+  },
+  // Adaptive resolution: the median frame time of each window decides the render scale.
+  windowSeconds: 1,
+  downscaleBelowFps: 50,
+  upscaleAboveFps: 58,
+  upscaleAfterSeconds: 5, // of good windows in a row before trying a sharper image
+  scaleStep: 0.25, // added to the hardware scaling factor per step (1 = full resolution)
+  maxScale: 2, // never below half the base resolution per axis
+  // An upscale that drops the FPS again within this many seconds blocks upscaling for upscaleBlockSeconds.
+  upscaleProbeSeconds: 3,
+  upscaleBlockSeconds: 30,
+  shadowsOffBelowFps: 30, // last resort at maxScale: turn shadows off
+  ignoreFrameMs: 250, // longer frames (tab switch, debugger) are not samples
 };
 
 export const NAMEPLATE = {
@@ -127,7 +156,7 @@ export const REPULSE = {
   launchSpeed: 25,
   launchLift: 0.12,
   heavyFactor: 0.5,
-  cooldown: 4,
+  cooldown: 2.5, // user decision 2026-09-30 (was 4); AI scale it by their difficulty's aiPerks.cooldown
   shakeDuration: 0.15,
   shakeAmplitude: 0.15,
 };
@@ -365,10 +394,15 @@ export const PARTICLES = {
   eliminationMax: 40,
   attractMinSize: 0.25,
   attractMaxSize: 0.45,
+  // One-shot bursts come from a fixed pool that lives for the whole session. Disposing the last
+  // burst released its compiled shader, so the next burst recompiled it: a 200–450 ms stall on
+  // every repulse after a quiet moment (measured on an M4; far worse on weak GPUs).
+  burstPool: 10,
 };
 
 export const AI = {
-  perceptionRadius: 26,
+  perceptionRadius: 26, // late game (see lateGameAliveAI): the last few AI must find each other on the big arena
+  localPerceptionRadius: 16, // before the late game: local fights only, so AI on outer platforms do not all converge on the hub
   targetHoldTime: 1.5,
   safeEdge: 7, // central platform thresholds (§20)
   dangerEdge: 3,
@@ -447,9 +481,17 @@ export const AI = {
   bridgeCenterGain: 0.8,
   wanderObstacleMargin: 1, // wander points are re-picked if within this of a raised block or pillar
   wanderPickTries: 6, // on a bridge, AI steering is pulled back toward the bridge centerline
+  // Spread and player focus (user request 2026-09-30: AI crowded the hub center; AI should go for a nearby player first).
+  targetDistanceScale: 10, // target score − distance / this (was the 26-unit perception radius): prefer local fights
+  crowdRadius: 6, // characters within this of a candidate target make it crowded...
+  crowdPenalty: 0.5, // ...each costs this much target score
+  separationRadius: 4, // AI steer away from other characters (not their target) closer than this
+  separationWeight: 0.7,
+  separationEdgeClearance: 3, // ...but not on walkways or this close to an edge, where a sideways shove is fatal
+  playerFocusRadius: 12, // the player within this is always the target (and the only one grabbed)
   ragdollTargetBonus: 0.6, // target score bonus for a ragdolled opponent (it can be grabbed and thrown)
   lowStability: 30, // below this, cautious AIs retreat to recover
-  retreatRadius: 7, // RETREAT on the hub moves radially inward to this radius
+  retreatRadius: 11, // RETREAT on the hub moves radially inward to this radius (was 7: retreating AI crowded the center; still SAFE)
   walkwayEntryInset: 2, // routing waypoints sit this far inside a platform, in line with the walkway
   walkwayAlignLateral: 0.8, // closer than this to a walkway's centerline counts as lined up with it
   walkwayCorridorExtend: 2.5, // edge distance is raised near walkway ends (this far along the axis)

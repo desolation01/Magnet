@@ -3,6 +3,7 @@ import { DirectionalLight } from "@babylonjs/core/Lights/directionalLight";
 import { Engine } from "@babylonjs/core/Engines/engine";
 import { HavokPlugin } from "@babylonjs/core/Physics/v2/Plugins/havokPlugin";
 import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight";
+import { RenderTargetTexture } from "@babylonjs/core/Materials/Textures/renderTargetTexture";
 import { Scene } from "@babylonjs/core/scene";
 import { ShadowGenerator } from "@babylonjs/core/Lights/Shadows/shadowGenerator";
 import { Vector3 } from "@babylonjs/core/Maths/math.vector";
@@ -18,7 +19,7 @@ import type { Character } from "../character/Character";
 import { Effects, type PlayerEffectsView } from "../combat/Effects";
 import { KnockbackSystem } from "../combat/KnockbackSystem";
 import { MagnetSystem } from "../combat/MagnetSystem";
-import { AI, COUNTDOWN, DEBUG, DEFAULT_DIFFICULTY, REPULSE, WORLD, type Difficulty } from "../config";
+import { AI, COUNTDOWN, DEBUG, DEFAULT_DIFFICULTY, QUALITY, REPULSE, WORLD, type Difficulty } from "../config";
 import { PlayerController } from "../player/PlayerController";
 import { ThirdPersonCamera } from "../player/ThirdPersonCamera";
 import { HUD } from "../ui/HUD";
@@ -30,6 +31,7 @@ import { Rng } from "../util/rng";
 import { installDebugHooks } from "./DebugHooks";
 import { GameStateMachine } from "./GameState";
 import { MatchManager } from "./MatchManager";
+import { AdaptiveResolution, isSoftwareRenderer, type QualitySettings } from "./Quality";
 
 export interface DebugInfo {
   state: string;
@@ -39,6 +41,9 @@ export interface DebugInfo {
   bodies: number;
   particles: number;
   nameplates: number;
+  /** Startup quality tier ("high" / "low") and the current adaptive render scale (1 = full). */
+  quality: string;
+  renderScale: number;
 }
 
 declare global {
@@ -75,6 +80,8 @@ export class Game {
   private readonly menu: MainMenu;
   private readonly nameplates: Nameplates;
   private readonly world: AIWorld;
+  private readonly quality: QualitySettings;
+  private readonly resolution: AdaptiveResolution;
 
   private difficulty: Difficulty = DEFAULT_DIFFICULTY;
   private countdownTime = 0;
@@ -88,9 +95,20 @@ export class Game {
   /** Projectile hits on characters this match (playtest metric). */
   private projectileHits = 0;
 
-  constructor(private readonly engine: Engine, canvas: HTMLCanvasElement, havok: HavokPhysicsWithBindings) {
+  constructor(private readonly engine: Engine, canvas: HTMLCanvasElement, havok: HavokPhysicsWithBindings, quality: QualitySettings) {
     const scene = new Scene(engine);
     this.scene = scene;
+    // A software rasterizer is the slowest "GPU" there is: use the low-tier shadow map on it too.
+    this.quality = isSoftwareRenderer(engine) ? { ...quality, tier: "low", shadowMapSize: QUALITY.low.shadowMapSize } : quality;
+    // Shadows off without changing any shader (scene.shadowsEnabled = false would recompile every
+    // material mid-match): the shadow map is cleared once and never drawn again.
+    this.resolution = new AdaptiveResolution(engine, () => {
+      const map = this.shadows.getShadowMap();
+      if (!map) return;
+      map.renderList = [];
+      map.refreshRate = RenderTargetTexture.REFRESHRATE_RENDER_ONCE;
+      map.resetRefreshCounter();
+    });
     scene.clearColor = Color4.FromHexString(`${WORLD.skyTop}ff`);
     scene.ambientColor = new Color3(0.3, 0.3, 0.35);
     scene.enablePhysics(new Vector3(0, WORLD.gravity, 0), new HavokPlugin(true, havok));
@@ -102,7 +120,7 @@ export class Game {
     const sun = new DirectionalLight("sun", new Vector3(-0.45, -1, -0.3), scene);
     sun.position = new Vector3(30, 60, 20);
     sun.intensity = 0.85;
-    this.shadows = new ShadowGenerator(2048, sun);
+    this.shadows = new ShadowGenerator(this.quality.shadowMapSize, sun);
     this.shadows.usePercentageCloserFiltering = true;
     this.shadows.filteringQuality = ShadowGenerator.QUALITY_LOW;
     this.shadows.bias = 0.002;
@@ -121,6 +139,7 @@ export class Game {
     this.controller.onLockChange = (locked) => this.hud.setLockHint(!locked && this.sm.is("COUNTDOWN", "PLAYING"));
 
     this.effects = new Effects(scene);
+    this.effects.warmUp();
     this.bouncePads = new BouncePads(scene, this.arena, this.effects, this.audio);
     this.magnets = new MagnetSystem(this.effects, {
       onRepulse: (user, pos) => {
@@ -287,6 +306,7 @@ export class Game {
   // ------------------------------------------------------------ frame update
 
   private update(): void {
+    this.resolution.update(this.engine.getDeltaTime());
     const dt = Math.min(this.engine.getDeltaTime() / 1000, WORLD.maxFrameDt);
     if (dt <= 0) return;
     this.decor.update(dt);
@@ -373,6 +393,8 @@ export class Game {
       bodies: physics?.getBodies?.().length ?? 0,
       particles: this.scene.particleSystems.length,
       nameplates: this.nameplates?.count ?? 0,
+      quality: this.quality?.tier ?? "high",
+      renderScale: this.resolution?.scale ?? 1,
     };
   }
 }

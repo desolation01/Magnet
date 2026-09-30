@@ -7,14 +7,20 @@ import "@babylonjs/core/Particles/particleSystemComponent";
 import "@babylonjs/core/Culling/ray";
 import { Engine } from "@babylonjs/core/Engines/engine";
 import HavokPhysics from "@babylonjs/havok";
-import { RENDER } from "./config";
 import { Game } from "./game/Game";
+import { detectQuality } from "./game/Quality";
 
 async function main(): Promise<void> {
   const canvas = document.getElementById("renderCanvas") as HTMLCanvasElement;
-  const engine = new Engine(canvas, true, { stencil: true, antialias: true, limitDeviceRatio: RENDER.maxPixelRatio }, true);
+  const quality = detectQuality();
+  const engine = new Engine(
+    canvas,
+    quality.antialias,
+    { stencil: true, antialias: quality.antialias, limitDeviceRatio: quality.maxPixelRatio },
+    true,
+  );
   const havok = await HavokPhysics();
-  const game = new Game(engine, canvas, havok);
+  const game = new Game(engine, canvas, havok, quality);
 
   engine.runRenderLoop(() => game.scene.render());
   window.addEventListener("resize", () => engine.resize());

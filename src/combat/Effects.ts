@@ -10,6 +10,15 @@ import { CreateTorus } from "@babylonjs/core/Meshes/Builders/torusBuilder";
 import { ATTRACT, COLORS, PARTICLES } from "../config";
 import { DEG } from "../util/math";
 
+interface Burst {
+  ps: ParticleSystem;
+  emitter: Vector3;
+  color2: Color4;
+  colorDead: Color4;
+  /** Start time (performance.now) while running; 0 when idle. */
+  startedAt: number;
+}
+
 interface Ring {
   mesh: Mesh;
   mat: StandardMaterial;
@@ -30,7 +39,7 @@ export interface PlayerEffectsView {
 export class Effects {
   private readonly texture: DynamicTexture;
   private readonly rings: Ring[] = [];
-  private readonly bursts = new Set<ParticleSystem>();
+  private readonly bursts: Burst[] = [];
   private readonly attractStream: ParticleSystem;
   private readonly attractEmitter = new Vector3();
   private readonly rangeIndicator: Mesh;
@@ -57,6 +66,9 @@ export class Effects {
       mat.alpha = 0;
       mesh.material = mat;
       mesh.isPickable = false;
+      // Always non-uniformly scaled (flat ring), so the warmed-up shader variant is the one drawn.
+      mesh.scaling.set(0.3, 1, 0.3);
+      mesh.computeWorldMatrix(true);
       mesh.setEnabled(false);
       this.rings.push({ mesh, mat, time: 0, duration: 0, maxScale: 1 });
     }
@@ -79,6 +91,8 @@ export class Effects {
     this.attractStream.minEmitPower = 9;
     this.attractStream.maxEmitPower = 14;
     this.attractStream.blendMode = ParticleSystem.BLENDMODE_ADD;
+
+    for (let i = 0; i < PARTICLES.burstPool; i++) this.bursts.push(this.createBurst());
 
     // Flat 60° sector on the ground showing attract range.
     this.rangeIndicator = this.buildSector(ATTRACT.range, ATTRACT.coneDeg);
@@ -111,34 +125,65 @@ export class Effects {
     return mesh;
   }
 
-  /** One-shot particle burst that disposes itself. */
-  burst(position: Vector3, color: Color4, count: number, power: number): void {
-    const ps = new ParticleSystem("burst", count, this.scene);
+  /** A pooled one-shot system, sized for the largest burst (AGENTS.md §10). */
+  private createBurst(): Burst {
+    const ps = new ParticleSystem("burst", PARTICLES.repulseMax, this.scene);
+    const b: Burst = { ps, emitter: new Vector3(), color2: new Color4(), colorDead: new Color4(), startedAt: 0 };
     ps.particleTexture = this.texture;
-    ps.emitter = position.clone();
+    ps.emitter = b.emitter;
     ps.createSphereEmitter(0.4);
-    ps.color1 = color;
-    ps.color2 = new Color4(1, 1, 1, color.a);
-    ps.colorDead = new Color4(color.r, color.g, color.b, 0);
+    ps.color2 = b.color2;
+    ps.colorDead = b.colorDead;
     ps.minSize = 0.15;
     ps.maxSize = 0.4;
     ps.minLifeTime = 0.25;
     ps.maxLifeTime = 0.5;
-    ps.manualEmitCount = count;
-    ps.minEmitPower = power * 0.6;
-    ps.maxEmitPower = power;
     ps.blendMode = ParticleSystem.BLENDMODE_ADD;
     ps.targetStopDuration = 0.6;
-    // Not disposeOnStop: its dispose() would also destroy the shared particle texture.
     ps.disposeOnStop = false;
     ps.onAnimationEnd = () => {
-      // Dispose outside the particle update loop, keeping the shared texture.
-      this.scene.onAfterRenderObservable.addOnce(() => {
-        if (!this.bursts.delete(ps)) return;
-        ps.dispose(false);
-      });
+      b.startedAt = 0;
     };
-    this.bursts.add(ps);
+    return b;
+  }
+
+  /**
+   * Compiles the effect shaders during loading instead of on the first repulse, and keeps them: the
+   * pooled systems hold a reference for the whole session. Babylon loads the particle shader source
+   * asynchronously, so isReady() is retried every frame until everything reports ready.
+   */
+  warmUp(): void {
+    const ring = this.rings[0];
+    const obs = this.scene.onBeforeRenderObservable.add(() => {
+      let ready = this.attractStream.isReady();
+      for (const b of this.bursts) ready = b.ps.isReady() && ready;
+      ready = ring.mat.isReady(ring.mesh) && ready;
+      ready = this.rangeMat.isReady(this.rangeIndicator) && ready;
+      if (ready) this.scene.onBeforeRenderObservable.remove(obs);
+    });
+  }
+
+  /** One-shot particle burst from the pool; steals the oldest running one when all are busy. */
+  burst(position: Vector3, color: Color4, count: number, power: number): void {
+    let b = this.bursts[0];
+    for (const c of this.bursts) {
+      if (c.startedAt === 0) {
+        b = c;
+        break;
+      }
+      if (c.startedAt < b.startedAt) b = c;
+    }
+    const ps = b.ps;
+    ps.stop();
+    ps.reset();
+    b.emitter.copyFrom(position);
+    ps.color1 = color;
+    b.color2.set(1, 1, 1, color.a);
+    b.colorDead.set(color.r, color.g, color.b, 0);
+    ps.manualEmitCount = Math.min(count, PARTICLES.repulseMax);
+    ps.minEmitPower = power * 0.6;
+    ps.maxEmitPower = power;
+    b.startedAt = performance.now();
     ps.start();
   }
 
@@ -149,7 +194,7 @@ export class Effects {
     ring.duration = 0.3;
     ring.maxScale = radius;
     ring.mesh.position.copyFrom(position);
-    ring.mesh.scaling.setAll(0.3);
+    ring.mesh.scaling.set(0.3, 1, 0.3);
     ring.mat.alpha = 0.8;
     ring.mesh.setEnabled(true);
   }
@@ -192,8 +237,11 @@ export class Effects {
 
   /** Stops continuous effects and removes one-shot ones (match reset). */
   clear(): void {
-    for (const ps of this.bursts) ps.dispose(false);
-    this.bursts.clear();
+    for (const b of this.bursts) {
+      b.ps.stop();
+      b.ps.reset();
+      b.startedAt = 0;
+    }
     this.attractStream.stop();
     this.attractStream.reset();
     for (const r of this.rings) {
@@ -205,6 +253,8 @@ export class Effects {
   }
 
   get activeParticleSystems(): number {
-    return this.bursts.size + (this.attractStream.isStarted() ? 1 : 0);
+    let n = this.attractStream.isStarted() ? 1 : 0;
+    for (const b of this.bursts) if (b.startedAt !== 0) n++;
+    return n;
   }
 }

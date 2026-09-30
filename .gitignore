@@ -14,10 +14,7 @@ blob-report/
 playwright/.cache/
 coverage/
 
-# Local working notes (not published)
-AGENTS.md
-task.md
-.dev/
+
 
 # Environment files
 .env

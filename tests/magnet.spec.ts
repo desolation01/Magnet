@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { ATTRACT, RAGDOLL, REPULSE } from "../src/config";
+import { ATTRACT, PARTICLES, RAGDOLL, REPULSE } from "../src/config";
 import {
   clearPlatformObjects,
   dist2D,
@@ -345,7 +345,7 @@ test.describe("magnet: repulse (§9, §26)", () => {
 
   test("particle bursts do not dispose the shared particle texture", async ({ page }) => {
     const before = await page.evaluate(() => window.__MM_TEST__!.counts().textures);
-    await playerInput(page, { repulse: true }); // repulse burst: 0.6 s, then disposeOnStop
+    await playerInput(page, { repulse: true }); // repulse burst: 0.6 s, then back to the pool
     await page.waitForTimeout(1_500);
     const after = await page.evaluate(() => window.__MM_TEST__!.counts().textures);
     // The attract stream shares the burst texture; it must still be renderable afterwards.
@@ -360,14 +360,16 @@ test.describe("magnet: repulse (§9, §26)", () => {
     expectNoErrors(errors);
   });
 
-  test("one-shot particle bursts finish and dispose themselves during a match", async ({ page }) => {
+  test("one-shot particle bursts finish and return to the pool during a match", async ({ page }) => {
     for (let i = 0; i < 3; i++) {
       await expect.poll(async () => (await getPlayer(page)).repulseCooldown, { timeout: REPULSE.cooldown * 1000 + 1_500 }).toBe(0);
       await playerInput(page, { repulse: true });
       await page.waitForTimeout(300);
     }
-    // Each burst lives 0.6 s (targetStopDuration) plus particle lifetime, then disposes itself.
-    await expect.poll(async () => (await page.evaluate(() => window.__MM_TEST__!.particleSystems()))
-      .filter((p) => p.name === "burst").length, { timeout: 4_000 }).toBe(0);
+    // Bursts come from a fixed pool (PARTICLES.burstPool): each runs 0.6 s (targetStopDuration) plus
+    // particle lifetime, then stops. The pool size itself never changes.
+    const bursts = async () => (await page.evaluate(() => window.__MM_TEST__!.particleSystems())).filter((p) => p.name === "burst");
+    await expect.poll(async () => (await bursts()).filter((p) => p.started).length, { timeout: 4_000 }).toBe(0);
+    expect((await bursts()).length, "burst pool size").toBe(PARTICLES.burstPool);
   });
 });

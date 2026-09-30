@@ -107,11 +107,15 @@ export class Arena {
     return mat;
   }
 
-  private addStatic(mesh: Mesh, shape: PhysicsShapeType, color: string, surface: SurfaceKind, ground = true): Mesh {
+  /**
+   * `castShadow` is false for the base platforms and walkways: they are the floor, with only sky
+   * below, so their shadows land on nothing and would only cost shadow-pass draw calls.
+   */
+  private addStatic(mesh: Mesh, shape: PhysicsShapeType, color: string, surface: SurfaceKind, ground = true, castShadow = true): Mesh {
     mesh.material = this.material(color);
     mesh.receiveShadows = true;
     mesh.metadata = { ground, cameraBlock: true, surface } satisfies ArenaMeshTag;
-    this.shadows.addShadowCaster(mesh);
+    if (castShadow) this.shadows.addShadowCaster(mesh);
     this.aggregates.push(new PhysicsAggregate(mesh, shape, { mass: 0, friction: 0.6, restitution: 0.1 }, this.scene));
     mesh.freezeWorldMatrix();
     this.staticMeshes.push(mesh);
@@ -154,7 +158,7 @@ export class Arena {
       ? CreateCylinder(def.name, { diameter: def.radius * 2, height: t, tessellation: def.kind === "hub" ? 64 : 36 }, this.scene)
       : CreateBox(def.name, { width: def.hx * 2, height: t, depth: def.hz * 2 }, this.scene);
     mesh.position.set(def.cx, -t / 2, def.cz);
-    this.addStatic(mesh, def.shape === "circle" ? PhysicsShapeType.CYLINDER : PhysicsShapeType.BOX, def.color, def.kind);
+    this.addStatic(mesh, def.shape === "circle" ? PhysicsShapeType.CYLINDER : PhysicsShapeType.BOX, def.color, def.kind, true, false);
     const p: Platform = {
       name: def.name, kind: def.kind, shape: def.shape, cx: def.cx, cz: def.cz, radius: def.radius, hx: def.hx, hz: def.hz,
       axisX: 0, axisZ: 0, halfLen: 0, halfWidth: 0, endSag: 0, ends: null, node: this.nodes.length,
@@ -200,7 +204,7 @@ export class Arena {
     // Babylon's rotation.y turns local +X toward (cos θ, −sin θ).
     mesh.rotation.y = Math.atan2(-az, ax);
     mesh.position.set(cx, -ARENA.bridgeThickness / 2 - ARENA.bridgeTopOffset, cz);
-    this.addStatic(mesh, PhysicsShapeType.BOX, def.color, "walkway");
+    this.addStatic(mesh, PhysicsShapeType.BOX, def.color, "walkway", true, false);
 
     const w: Platform = {
       name: def.name, kind: "bridge", shape: "rect", cx, cz, radius: 0, hx: 0, hz: 0,

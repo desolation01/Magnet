@@ -1,4 +1,7 @@
+// Side-effect import: adds createInstance to Mesh (deep imports do not register it).
+import "@babylonjs/core/Meshes/instancedMesh";
 import { Color3 } from "@babylonjs/core/Maths/math.color";
+import type { AbstractMesh } from "@babylonjs/core/Meshes/abstractMesh";
 import { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { Scene } from "@babylonjs/core/scene";
 import { ShadowGenerator } from "@babylonjs/core/Lights/Shadows/shadowGenerator";
@@ -9,10 +12,10 @@ import { CreateSphere } from "@babylonjs/core/Meshes/Builders/sphereBuilder";
 import { CHARACTER, COLORS } from "../config";
 import { clamp, smoothFactor } from "../util/math";
 
-/** Full-body animation states (AGENTS.md §14). MAGNET is an upper-body overlay flag. */
 /** Character parts that cast shadows (arms, eyes and magnet are too small to matter). */
 const SHADOW_CASTERS = new Set(["torsoMesh", "head", "legL", "legR"]);
 
+/** Full-body animation states (AGENTS.md §14). MAGNET is an upper-body overlay flag. */
 export enum AnimState {
   IDLE,
   MOVE,
@@ -29,7 +32,48 @@ interface SharedMaterials {
   eye: StandardMaterial;
 }
 
+/**
+ * Parts whose material is the same for every character. The AI draw them as instances of these
+ * hidden source meshes, so each part type costs one draw call for all AI instead of one per AI.
+ * The player uses plain copies (its outline must not spread to the instances).
+ */
+interface SharedParts {
+  leg: Mesh;
+  head: Mesh;
+  eyes: Mesh;
+  tip: Mesh;
+}
+
 const shared = new WeakMap<Scene, SharedMaterials>();
+const sharedPartMeshes = new WeakMap<Scene, SharedParts>();
+
+function sharedParts(scene: Scene, shadows: ShadowGenerator): SharedParts {
+  let p = sharedPartMeshes.get(scene);
+  if (!p) {
+    const mats = sharedMaterials(scene);
+    const source = (m: Mesh, mat: StandardMaterial, castShadow: boolean): Mesh => {
+      m.material = mat;
+      m.isPickable = false;
+      m.isVisible = false; // only its instances are drawn
+      m.doNotSyncBoundingInfo = true;
+      if (castShadow) shadows.addShadowCaster(m, false);
+      return m;
+    };
+    const eyeL = CreateBox("eyeL", { width: 0.09, height: 0.16, depth: 0.05 }, scene);
+    const eyeR = CreateBox("eyeR", { width: 0.09, height: 0.16, depth: 0.05 }, scene);
+    eyeL.position.set(-0.14, 0, 0);
+    eyeR.position.set(0.14, 0, 0);
+    p = {
+      leg: source(CreateBox("leg-src", { width: 0.3, height: 0.7, depth: 0.32 }, scene), mats.pants, true),
+      head: source(CreateSphere("head-src", { diameter: 0.78, segments: 8 }, scene), mats.skin, true),
+      eyes: source(Mesh.MergeMeshes([eyeL, eyeR], true)!, mats.eye, false),
+      tip: source(CreateBox("tip-src", { width: 0.15, height: 0.12, depth: 0.19 }, scene), mats.silver, false),
+    };
+    p.eyes.name = "eyes-src";
+    sharedPartMeshes.set(scene, p);
+  }
+  return p;
+}
 
 function sharedMaterials(scene: Scene): SharedMaterials {
   let m = shared.get(scene);
@@ -71,7 +115,7 @@ export class CharacterVisual {
   private readonly armR: Joint;
   private readonly legL: Joint;
   private readonly legR: Joint;
-  private readonly meshes: Mesh[] = [];
+  private readonly meshes: AbstractMesh[] = [];
   private readonly ownMaterials: StandardMaterial[] = [];
   private readonly magnetMat: StandardMaterial;
   private readonly magnetBaseEmissive: Color3;
@@ -80,7 +124,7 @@ export class CharacterVisual {
   private spin = 0;
 
   constructor(scene: Scene, parent: Mesh, color: string, isPlayer: boolean, shadows: ShadowGenerator) {
-    const mats = sharedMaterials(scene);
+    const parts = sharedParts(scene, shadows);
     const bodyMat = new StandardMaterial(`body-${parent.name}`, scene);
     bodyMat.diffuseColor = Color3.FromHexString(color);
     bodyMat.emissiveColor = Color3.FromHexString(color).scale(0.2);
@@ -109,27 +153,31 @@ export class CharacterVisual {
       this.meshes.push(m);
       return m;
     };
+    // A shared part: an instance for the AI, a visible copy (sharing the geometry) for the player.
+    const part = (name: string, src: Mesh, p: TransformNode, x: number, y: number, z: number): AbstractMesh => {
+      const m: AbstractMesh = isPlayer ? src.clone(name, null, true) : src.createInstance(name);
+      if (isPlayer) m.isVisible = true;
+      m.parent = p;
+      m.position.set(x, y, z);
+      this.meshes.push(m);
+      return m;
+    };
 
     this.body = node("body", this.root, 0, 0, 0);
 
     // Legs
     const hipL = node("hipL", this.body, -0.2, 0.7, 0);
     const hipR = node("hipR", this.body, 0.2, 0.7, 0);
-    box("legL", hipL, 0.3, 0.7, 0.32, 0, -0.35, 0, mats.pants);
-    box("legR", hipR, 0.3, 0.7, 0.32, 0, -0.35, 0, mats.pants);
+    part("legL", parts.leg, hipL, 0, -0.35, 0);
+    part("legR", parts.leg, hipR, 0, -0.35, 0);
     this.legL = new Joint(hipL);
     this.legR = new Joint(hipR);
 
     // Torso + head
     this.torsoPivot = node("torso", this.body, 0, 0.7, 0);
     box("torsoMesh", this.torsoPivot, 0.85, 0.72, 0.48, 0, 0.36, 0, bodyMat);
-    const head = CreateSphere("head", { diameter: 0.78, segments: 8 }, scene);
-    head.parent = this.torsoPivot;
-    head.position.set(0, 1.1, 0);
-    head.material = mats.skin;
-    this.meshes.push(head);
-    box("eyeL", this.torsoPivot, 0.09, 0.16, 0.05, -0.14, 1.15, 0.37, mats.eye);
-    box("eyeR", this.torsoPivot, 0.09, 0.16, 0.05, 0.14, 1.15, 0.37, mats.eye);
+    part("head", parts.head, this.torsoPivot, 0, 1.1, 0);
+    part("eyes", parts.eyes, this.torsoPivot, 0, 1.15, 0.37);
 
     // Arms
     const shL = node("shoulderL", this.torsoPivot, -0.55, 0.62, 0);
@@ -140,16 +188,30 @@ export class CharacterVisual {
     this.armR = new Joint(shR);
 
     // U-shaped magnet in the right hand; prongs continue along the arm (−Y in arm space).
-    box("magnetBase", shR, 0.52, 0.14, 0.18, 0, -0.64, 0, this.magnetMat);
-    box("prongL", shR, 0.14, 0.32, 0.18, -0.19, -0.86, 0, this.magnetMat);
-    box("prongR", shR, 0.14, 0.32, 0.18, 0.19, -0.86, 0, this.magnetMat);
-    box("tipL", shR, 0.15, 0.12, 0.19, -0.19, -1.07, 0, this.magnetMat);
-    box("tipR", shR, 0.15, 0.12, 0.19, 0.19, -1.07, 0, mats.silver);
+    // The red pieces are merged into one mesh (one draw call); the silver tip is a shared part.
+    // Built unparented at their arm-space positions: MergeMeshes bakes world transforms.
+    const piece = (w: number, h: number, d: number, x: number, y: number): Mesh => {
+      const m = CreateBox("magnet-piece", { width: w, height: h, depth: d }, scene);
+      m.position.set(x, y, 0);
+      return m;
+    };
+    const magnet = Mesh.MergeMeshes([
+      piece(0.52, 0.14, 0.18, 0, -0.64),
+      piece(0.14, 0.32, 0.18, -0.19, -0.86),
+      piece(0.14, 0.32, 0.18, 0.19, -0.86),
+      piece(0.15, 0.12, 0.19, -0.19, -1.07),
+    ], true)!;
+    magnet.name = "magnet";
+    magnet.material = this.magnetMat;
+    magnet.parent = shR;
+    this.meshes.push(magnet);
+    part("tipR", parts.tip, shR, 0.19, -1.07, 0);
 
     for (const m of this.meshes) {
       m.isPickable = false;
       // Only the big parts cast shadows: halves the shadow pass for 11 characters, looks the same.
-      if (SHADOW_CASTERS.has(m.name)) shadows.addShadowCaster(m, false);
+      // AI legs and heads cast through their shared source mesh (one batched shadow draw).
+      if (SHADOW_CASTERS.has(m.name) && (isPlayer || m instanceof Mesh)) shadows.addShadowCaster(m, false);
       if (isPlayer) {
         m.renderOutline = true;
         m.outlineColor = Color3.FromHexString(COLORS.playerOutline);

@@ -33,9 +33,9 @@ export function edgeZone(arena: Arena, x: number, z: number, diff: DifficultySet
   return { zone: EdgeZone.SAFE, distance: d };
 }
 
-export function perceiveOpponents(self: Character, world: AIWorld, out: Character[]): Character[] {
+export function perceiveOpponents(self: Character, world: AIWorld, out: Character[], radius: number): Character[] {
   out.length = 0;
-  const r2 = AI.perceptionRadius * AI.perceptionRadius;
+  const r2 = radius * radius;
   for (const c of world.characters) {
     if (c === self || !c.alive) continue;
     const dx = c.position.x - self.position.x;
@@ -45,7 +45,6 @@ export function perceiveOpponents(self: Character, world: AIWorld, out: Characte
   return out;
 }
 
-/** Target score (AGENTS.md §18). Higher is better. */
 /** True when at most AI.lateGameAliveAI AI opponents are still alive (late-game push). */
 export function isLateGame(world: AIWorld): boolean {
   let alive = 0;
@@ -53,6 +52,15 @@ export function isLateGame(world: AIWorld): boolean {
   return alive <= AI.lateGameAliveAI;
 }
 
+/** The player, if perceived and within AI.playerFocusRadius of `self`. */
+export function nearbyPlayer(self: Character, perceived: Character[]): Character | null {
+  for (const c of perceived) {
+    if (c.isPlayer && Math.hypot(c.position.x - self.position.x, c.position.z - self.position.z) <= AI.playerFocusRadius) return c;
+  }
+  return null;
+}
+
+/** Target score (AGENTS.md §18). Higher is better. */
 export function scoreTarget(
   self: Character,
   target: Character,
@@ -64,9 +72,14 @@ export function scoreTarget(
   const dist = Math.hypot(target.position.x - self.position.x, target.position.z - self.position.z);
   const targetEdge = world.arena.edgeInfo(target.position.x, target.position.z).distance;
   const edgeBonus = Math.min(1, Math.max(0, 1 - targetEdge / AI.safeEdge));
-  let score = personality.aggression - dist / AI.perceptionRadius + edgeBonus * edgeWeight + 0.5 * (1 - target.stability / 100);
+  let score = personality.aggression - dist / AI.targetDistanceScale + edgeBonus * edgeWeight + 0.5 * (1 - target.stability / 100);
   if (selfZone !== EdgeZone.SAFE) score -= 0.5;
   if (target.ragdolled) score += AI.ragdollTargetBonus; // helpless: grab it and throw it
+  // A target that already has a crowd around it is less attractive: fights spread out over the arena.
+  for (const c of world.characters) {
+    if (c === self || c === target || !c.alive) continue;
+    if (Math.hypot(c.position.x - target.position.x, c.position.z - target.position.z) < AI.crowdRadius) score -= AI.crowdPenalty;
+  }
   score += (world.rng.next() * 2 - 1) * personality.randomness * 0.5;
   return score;
 }
@@ -80,6 +93,9 @@ export function selectTarget(
 ): Character | null {
   const edgeWeight = isLateGame(world) ? AI.lateGameEdgeWeight : 1;
   if (perceived.length === 0) return null;
+  // Player focus: a nearby player is always the target, however crowded it is.
+  const player = nearbyPlayer(self, perceived);
+  if (player) return player;
   // Chaotic AIs sometimes just pick anyone.
   if (world.rng.chance(personality.randomness * 0.3)) {
     return perceived[Math.floor(world.rng.next() * perceived.length)];
@@ -121,11 +137,11 @@ export function findComboObject(self: Character, target: Character, world: AIWor
  * Nearest ragdolled opponent this AI can reach and grab before its ragdoll ends (AGENTS.md §19, §24.1).
  * Skips opponents held by someone else, already falling, or still in this AI's regrab lockout.
  */
-export function findGrabTarget(self: Character, perceived: Character[], world: AIWorld): Character | null {
+export function findGrabTarget(self: Character, perceived: Character[], world: AIWorld, only: Character | null = null): Character | null {
   let best: Character | null = null;
   let bestDist = AI.grabSearchRadius;
   for (const c of perceived) {
-    if (!c.ragdolled || (c.heldBy && c.heldBy !== self) || c.position.y < -1) continue;
+    if ((only && c !== only) || !c.ragdolled || (c.heldBy && c.heldBy !== self) || c.position.y < -1) continue;
     if ((c.regrabLockUntil.get(self) ?? 0) > world.time) continue;
     const d = Math.hypot(c.position.x - self.position.x, c.position.z - self.position.z);
     if (d >= bestDist) continue;

@@ -80,8 +80,8 @@ test("restarting 5 times returns resource counts to the first-match baseline (§
     console.log(`restart ${i + 1}`, JSON.stringify(c));
   }
 
-  // Exact equality: every per-match resource is disposed on reset. The countdown pop / burst
-  // particle systems are disposed with the match, so no tolerance is needed.
+  // Exact equality: every per-match resource is disposed on reset. Burst particle systems come from
+  // a fixed session-long pool, so no tolerance is needed.
   for (const [i, c] of history.entries()) {
     expect(c, `resource counts after restart ${i + 1}`).toEqual(baseline);
   }
